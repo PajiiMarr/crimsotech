@@ -31323,11 +31323,13 @@ class PurchasesBuyer(viewsets.ViewSet):
                 'success': False
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
             
-    # In your PurchasesBuyer viewset
-
     @action(detail=True, methods=['post'], url_path='complete-shop-item')
-    def complete_item(self, request, pk=None):
+    def complete_shop_item(self, request, pk=None):
         """Buyer can mark a specific item as completed/received"""
+        print(f"🔥 [complete_item] Request received for order {pk}")
+        print(f"🔥 Request data: {request.data}")
+        print(f"🔥 Headers: {request.headers.get('X-User-Id')}")
+        
         user_id = request.headers.get('X-User-Id')
         if not user_id:
             return Response({'success': False, 'message': 'X-User-Id header is required'}, status=status.HTTP_400_BAD_REQUEST)
@@ -31341,11 +31343,14 @@ class PurchasesBuyer(viewsets.ViewSet):
             return Response({'success': False, 'message': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
 
         checkout_id = request.data.get('checkout_id')
+        print(f"🔥 checkout_id: {checkout_id}")
+        
         if not checkout_id:
             return Response({'success': False, 'message': 'checkout_id is required'}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             checkout = Checkout.objects.get(id=checkout_id, order=order)
+            print(f"🔥 Found checkout: {checkout.id}, status: {checkout.status}")
         except Checkout.DoesNotExist:
             return Response({'success': False, 'message': 'Item not found'}, status=status.HTTP_404_NOT_FOUND)
 
@@ -31363,18 +31368,49 @@ class PurchasesBuyer(viewsets.ViewSet):
             # Mark this checkout as completed
             checkout.status = 'completed'
             checkout.save(update_fields=['status'])
+            print(f"✅ Checkout {checkout.id} marked as completed")
+
+            # Get shop_id from request or from checkout
+            shop_id = request.data.get('shop_id')
+            if not shop_id and checkout.cart_item and checkout.cart_item.product and checkout.cart_item.product.shop:
+                shop_id = str(checkout.cart_item.product.shop.id)
+            elif not shop_id and hasattr(checkout, 'direct_shop_id') and checkout.direct_shop_id:
+                shop_id = checkout.direct_shop_id
+            
+            # Update OrderShopStatus for this shop
+            if shop_id:
+                try:
+                    from api.models import Shop, OrderShopStatus
+                    shop = Shop.objects.get(id=shop_id)
+                    order_shop_status, created = OrderShopStatus.objects.get_or_create(
+                        order=order,
+                        shop=shop,
+                        defaults={'status': 'completed'}
+                    )
+                    if not created and order_shop_status.status == 'delivered':
+                        order_shop_status.status = 'completed'
+                        order_shop_status.save(update_fields=['status'])
+                        print(f"✅ OrderShopStatus for {shop.name} updated to 'completed'")
+                    elif created:
+                        print(f"✅ Created new OrderShopStatus for {shop.name} with status 'completed'")
+                except Shop.DoesNotExist:
+                    print(f"⚠️ Shop {shop_id} not found")
+            else:
+                print(f"⚠️ No shop_id found for checkout {checkout.id}")
 
             # Update order status based on all checkouts
             self._update_order_status_from_checkouts(order)
 
             # Check if all items are completed
             all_completed = all(c.status == 'completed' for c in Checkout.objects.filter(order=order))
+            print(f"🔥 All items completed: {all_completed}")
 
             if all_completed:
                 order.status = 'completed'
                 order.completed_at = timezone.now()
                 order.refund_expire_date = order.completed_at + timedelta(days=1)
                 order.save(update_fields=['status', 'completed_at', 'refund_expire_date'])
+                print(f"✅ Order {order.order} marked as completed")
 
             return Response({
                 'success': True, 
@@ -31384,10 +31420,12 @@ class PurchasesBuyer(viewsets.ViewSet):
             }, status=status.HTTP_200_OK)
             
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             logger.exception('Error marking item as completed: %s', e)
             return Response({'success': False, 'message': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-
+            
 
 class ReturnPurchaseBuyer(viewsets.ViewSet):
     @action(detail=True, methods=['get'])
