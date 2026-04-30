@@ -31184,7 +31184,69 @@ class PurchasesBuyer(viewsets.ViewSet):
                 'success': False
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+    # In your PurchasesBuyer viewset
 
+    @action(detail=True, methods=['post'], url_path='complete-item')
+    def complete_item(self, request, pk=None):
+        """Buyer can mark a specific item as completed/received"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({'success': False, 'message': 'X-User-Id header is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            order = Order.objects.get(order=pk)
+        except Order.DoesNotExist:
+            return Response({'success': False, 'message': 'Order not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        if str(order.user.id) != str(user_id):
+            return Response({'success': False, 'message': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
+
+        checkout_id = request.data.get('checkout_id')
+        if not checkout_id:
+            return Response({'success': False, 'message': 'checkout_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            checkout = Checkout.objects.get(id=checkout_id, order=order)
+        except Checkout.DoesNotExist:
+            return Response({'success': False, 'message': 'Item not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Only allow completing delivered items
+        if checkout.status != 'delivered':
+            return Response({
+                'success': False, 
+                'message': f'Item cannot be completed. Current status: {checkout.status}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            from django.utils import timezone
+            from datetime import timedelta
+            
+            # Mark this checkout as completed
+            checkout.status = 'completed'
+            checkout.save(update_fields=['status'])
+
+            # Update order status based on all checkouts
+            self._update_order_status_from_checkouts(order)
+
+            # Check if all items are completed
+            all_completed = all(c.status == 'completed' for c in Checkout.objects.filter(order=order))
+
+            if all_completed:
+                order.status = 'completed'
+                order.completed_at = timezone.now()
+                order.refund_expire_date = order.completed_at + timedelta(days=1)
+                order.save(update_fields=['status', 'completed_at', 'refund_expire_date'])
+
+            return Response({
+                'success': True, 
+                'message': 'Item marked as received successfully',
+                'item_status': checkout.status,
+                'order_status': order.status
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            logger.exception('Error marking item as completed: %s', e)
+            return Response({'success': False, 'message': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 
