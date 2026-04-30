@@ -31117,6 +31117,7 @@ class PurchasesBuyer(viewsets.ViewSet):
         if not checkout_ids:
             return Response({'error': 'checkout_ids array is required'}, status=status.HTTP_400_BAD_REQUEST)
 
+        # Allow cancellation for pending orders only
         if order.status not in ['pending', 'processing']:
             return Response({
                 'error': f'Cannot cancel items for order with status: {order.status}',
@@ -31138,32 +31139,80 @@ class PurchasesBuyer(viewsets.ViewSet):
             cancelled_count = 0
             cancelled_items = []
             cancelled_total = Decimal('0')
+            affected_shops = set()  # Track which shops have cancelled items
             
             for checkout in checkouts:
-                if checkout.status == 'pending':
-                    checkout.status = 'cancelled'
-                    checkout.save(update_fields=['status'])
-                    cancelled_count += 1
-                    cancelled_items.append(str(checkout.id))
+                # Only allow cancelling items with pending status
+                if checkout.status != 'pending':
+                    continue
                     
-                    if checkout.total_amount:
-                        cancelled_total += checkout.total_amount
-                    
-                    if checkout.cart_item and checkout.cart_item.variant:
-                        variant = checkout.cart_item.variant
+                checkout.status = 'cancelled'
+                checkout.save(update_fields=['status'])
+                cancelled_count += 1
+                cancelled_items.append(str(checkout.id))
+                
+                # Track the shop for this checkout
+                shop_id = None
+                if checkout.cart_item and checkout.cart_item.product and checkout.cart_item.product.shop:
+                    shop_id = checkout.cart_item.product.shop.id
+                elif hasattr(checkout, 'direct_shop_id') and checkout.direct_shop_id:
+                    shop_id = checkout.direct_shop_id
+                
+                if shop_id:
+                    affected_shops.add(shop_id)
+                
+                if checkout.total_amount:
+                    cancelled_total += checkout.total_amount
+                
+                # Restore stock
+                if checkout.cart_item and checkout.cart_item.variant:
+                    variant = checkout.cart_item.variant
+                    variant.quantity += checkout.quantity
+                    variant.save(update_fields=['quantity'])
+                elif checkout.cart_item and checkout.cart_item.product:
+                    product = checkout.cart_item.product
+                    product.quantity += checkout.quantity
+                    product.save(update_fields=['quantity'])
+                elif hasattr(checkout, 'direct_variant_id') and checkout.direct_variant_id:
+                    try:
+                        variant = Variants.objects.get(id=checkout.direct_variant_id)
                         variant.quantity += checkout.quantity
                         variant.save(update_fields=['quantity'])
-                    elif checkout.cart_item and checkout.cart_item.product:
-                        product = checkout.cart_item.product
-                        product.quantity += checkout.quantity
-                        product.save(update_fields=['quantity'])
-                    elif hasattr(checkout, 'direct_variant_id') and checkout.direct_variant_id:
-                        try:
-                            variant = Variants.objects.get(id=checkout.direct_variant_id)
-                            variant.quantity += checkout.quantity
-                            variant.save(update_fields=['quantity'])
-                        except Variants.DoesNotExist:
-                            pass
+                    except Variants.DoesNotExist:
+                        pass
+            
+            # Update OrderShopStatus for each affected shop
+            for shop_id in affected_shops:
+                try:
+                    from api.models import Shop
+                    shop = Shop.objects.get(id=shop_id)
+                    order_shop_status, created = OrderShopStatus.objects.get_or_create(
+                        order=order,
+                        shop=shop,
+                        defaults={'status': 'cancelled'}
+                    )
+                    
+                    # Check if all items from this shop are cancelled
+                    shop_checkouts = Checkout.objects.filter(
+                        Q(order=order, cart_item__product__shop=shop) |
+                        Q(order=order, direct_shop_id=str(shop.id))
+                    )
+                    
+                    all_cancelled = all(c.status == 'cancelled' for c in shop_checkouts)
+                    
+                    if all_cancelled:
+                        order_shop_status.status = 'cancelled'
+                        order_shop_status.save(update_fields=['status'])
+                        print(f"✅ Shop {shop.name} status updated to 'cancelled' for order {order.order}")
+                    else:
+                        # If some items are still pending, keep as pending
+                        has_pending = any(c.status == 'pending' for c in shop_checkouts)
+                        if has_pending and order_shop_status.status != 'pending':
+                            order_shop_status.status = 'pending'
+                            order_shop_status.save(update_fields=['status'])
+                            print(f"✅ Shop {shop.name} status updated to 'pending' (some items pending) for order {order.order}")
+                except Shop.DoesNotExist:
+                    pass
             
             if cancelled_total > 0:
                 new_total = order.total_amount - cancelled_total
@@ -31172,6 +31221,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                 order.total_amount = new_total
                 order.save(update_fields=['total_amount'])
             
+            # Update order status based on remaining checkouts
             self._update_order_status_from_checkouts(order)
             
             remaining_checkouts = Checkout.objects.filter(order=order).exclude(status='cancelled')
@@ -31196,7 +31246,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                 'error': str(e),
                 'success': False
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
+            
     # In your PurchasesBuyer viewset
 
     @action(detail=True, methods=['post'], url_path='complete-item')
@@ -33311,7 +33361,6 @@ class RiderOrdersActive(viewsets.ViewSet):
             }
         })
 
-
     @action(detail=False, methods=['post'])
     def deliver_order(self, request):
         """
@@ -33367,6 +33416,8 @@ class RiderOrdersActive(viewsets.ViewSet):
         
         # Get the shop from delivery (direct foreign key) or from metadata
         delivery_shop = None
+        delivery_shop_id = None
+        
         if hasattr(delivery, 'shop') and delivery.shop:
             delivery_shop = delivery.shop
             delivery_shop_id = str(delivery_shop.id)
@@ -33376,8 +33427,6 @@ class RiderOrdersActive(viewsets.ViewSet):
                 delivery_shop = Shop.objects.get(id=delivery_shop_id)
             except Shop.DoesNotExist:
                 delivery_shop = None
-        else:
-            delivery_shop_id = None
         
         # Update ONLY the checkouts from this shop to 'delivered'
         updated_count = 0
@@ -33396,9 +33445,24 @@ class RiderOrdersActive(viewsets.ViewSet):
                     print(f"✅ Marked checkout {checkout.id} as delivered for shop {delivery_shop_id}")
             
             print(f"✅ Marked {updated_count} items as delivered for shop {delivery_shop_id}")
+            
+            # ========== UPDATE OrderShopStatus to 'delivered' ==========
+            if delivery_shop:
+                try:
+                    order_shop_status, created = OrderShopStatus.objects.get_or_create(
+                        order=order,
+                        shop=delivery_shop,
+                        defaults={'status': 'delivered'}
+                    )
+                    if not created and order_shop_status.status != 'delivered':
+                        order_shop_status.status = 'delivered'
+                        order_shop_status.updated_at = timezone.now()
+                        order_shop_status.save()
+                        print(f"✅ Updated OrderShopStatus for shop {delivery_shop.name} to 'delivered'")
+                except Exception as e:
+                    print(f"Error updating OrderShopStatus: {e}")
         
         # Update order status based on all checkouts
-    
         purchases_buyer = PurchasesBuyer()
         purchases_buyer._update_order_status_from_checkouts(order)
         
@@ -33411,8 +33475,8 @@ class RiderOrdersActive(viewsets.ViewSet):
                 "delivered_at": delivery.delivered_at.isoformat(),
             }
         })
-
         
+            
     @action(detail=False, methods=['post'])
     def decline_order(self, request):
         """

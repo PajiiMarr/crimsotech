@@ -986,11 +986,19 @@ export default function ViewTrackOrderPage() {
       new Set(),
     );
 
+    // Only items with shop_status 'pending' can be cancelled
     const cancellableItems = items.filter(
-      (item) => item.item_status !== "cancelled",
+      (item) => item.shop_status === "pending",
     );
     const cancelledItems = items.filter(
-      (item) => item.item_status === "cancelled",
+      (item) => item.shop_status === "cancelled",
+    );
+    const nonCancellableItems = items.filter(
+      (item) =>
+        item.shop_status !== "pending" &&
+        item.shop_status !== "cancelled" &&
+        item.shop_status !== "delivered" &&
+        item.shop_status !== "completed",
     );
 
     useEffect(() => {
@@ -1083,6 +1091,7 @@ export default function ViewTrackOrderPage() {
               style={styles.cancelItemsList}
               showsVerticalScrollIndicator={false}
             >
+              {/* Cancellable Items (Pending) */}
               {cancellableItems.length > 0 && (
                 <>
                   <Text style={styles.cancelSectionTitle}>
@@ -1150,6 +1159,114 @@ export default function ViewTrackOrderPage() {
                 </>
               )}
 
+              {/* Non-Cancellable Items (Processing, Rider Assigned, Shipped, etc.) */}
+              {nonCancellableItems.length > 0 && (
+                <>
+                  <Text
+                    style={[
+                      styles.cancelSectionTitle,
+                      styles.cancelSectionTitleDisabled,
+                    ]}
+                  >
+                    Cannot Cancel (Already Processing)
+                  </Text>
+                  {nonCancellableItems.map((item) => {
+                    const imageUrl =
+                      item.primary_image?.url ||
+                      (item.product_images && item.product_images[0]?.url) ||
+                      "https://via.placeholder.com/50";
+
+                    const getStatusReason = () => {
+                      switch (item.shop_status) {
+                        case "processing":
+                          return "Already being processed by seller";
+                        case "rider_assigned":
+                          return "Rider already assigned";
+                        case "shipped":
+                          return "Item already shipped";
+                        case "to_deliver":
+                          return "Out for delivery";
+                        case "delivered":
+                          return "Item already delivered";
+                        case "completed":
+                          return "Order completed";
+                        default:
+                          return `Status: ${item.shop_status}`;
+                      }
+                    };
+
+                    return (
+                      <View
+                        key={item.checkout_id}
+                        style={[
+                          styles.cancelItemCard,
+                          styles.cancelItemCardDisabled,
+                        ]}
+                      >
+                        <Image
+                          source={{ uri: imageUrl }}
+                          style={[
+                            styles.cancelItemImage,
+                            styles.cancelItemImageDisabled,
+                          ]}
+                        />
+                        <View style={styles.cancelItemDetails}>
+                          <Text
+                            style={[
+                              styles.cancelItemName,
+                              styles.cancelItemTextDisabled,
+                            ]}
+                            numberOfLines={2}
+                          >
+                            {item.product_name}
+                          </Text>
+                          {item.product_variant ? (
+                            <Text
+                              style={[
+                                styles.cancelItemVariant,
+                                styles.cancelItemTextDisabled,
+                              ]}
+                              numberOfLines={1}
+                            >
+                              {item.product_variant}
+                            </Text>
+                          ) : null}
+                          <View style={styles.cancelItemMeta}>
+                            <Text
+                              style={[
+                                styles.cancelItemQuantity,
+                                styles.cancelItemTextDisabled,
+                              ]}
+                            >
+                              Qty: {item.quantity}
+                            </Text>
+                            <Text
+                              style={[
+                                styles.cancelItemPrice,
+                                styles.cancelItemTextDisabled,
+                              ]}
+                            >
+                              {formatCurrency(item.price)}
+                            </Text>
+                          </View>
+                          <Text style={styles.cancelReasonText}>
+                            {getStatusReason()}
+                          </Text>
+                        </View>
+                        <View style={styles.cancelItemBlockedIcon}>
+                          <MaterialIcons
+                            name="block"
+                            size={20}
+                            color="#9CA3AF"
+                          />
+                        </View>
+                      </View>
+                    );
+                  })}
+                </>
+              )}
+
+              {/* Already Cancelled Items */}
               {cancelledItems.length > 0 && (
                 <>
                   <Text
@@ -1236,6 +1353,26 @@ export default function ViewTrackOrderPage() {
                   })}
                 </>
               )}
+
+              {/* No cancellable items message */}
+              {cancellableItems.length === 0 &&
+                cancelledItems.length === 0 &&
+                nonCancellableItems.length === 0 && (
+                  <View style={styles.noCancelItemsContainer}>
+                    <MaterialIcons
+                      name="info-outline"
+                      size={48}
+                      color="#9CA3AF"
+                    />
+                    <Text style={styles.noCancelItemsText}>
+                      No items available to cancel
+                    </Text>
+                    <Text style={styles.noCancelItemsSubtext}>
+                      Items that are already processing, shipped, or delivered
+                      cannot be cancelled.
+                    </Text>
+                  </View>
+                )}
             </ScrollView>
 
             <View style={styles.cancelItemsFooter}>
@@ -1456,9 +1593,9 @@ export default function ViewTrackOrderPage() {
     // router.push(`/product/${productId}`);
   };
 
-  const handleReceiveItem = async (checkoutId: string) => {
+  const handleReceiveItem = async (checkoutId: string, shopId: string) => {
     Alert.alert(
-      "Confirm Item Received",
+      "Confirm Order Received",
       "Have you received this item? This will mark it as completed.",
       [
         { text: "No", style: "cancel" },
@@ -1467,15 +1604,15 @@ export default function ViewTrackOrderPage() {
           onPress: async () => {
             try {
               const response = await AxiosInstance.post(
-                `/purchases-buyer/${orderId}/complete-item/`,
-                { checkout_id: checkoutId },
+                `/purchases-buyer/${orderId}/complete-shop-item/`,
+                { checkout_id: checkoutId, shop_id: shopId },
                 { headers: { "X-User-Id": user?.id } },
               );
 
               if (response.data.success) {
                 setCenterToastMessage("Item marked as received");
                 setCenterToastVisible(true);
-                fetchOrderData(); // Refresh to update UI
+                fetchOrderData();
               }
             } catch (error: any) {
               setCenterToastMessage(error.response?.data?.message || "Failed");
@@ -1544,7 +1681,8 @@ export default function ViewTrackOrderPage() {
         order?.delivery_status?.toLowerCase() === "pending") ||
       orderStatusLower === "delivered" ||
       orderStatusLower === "picked_up" ||
-      orderStatusLower === "completed"
+      orderStatusLower === "completed" ||
+      orderStatusLower === "partially_delivered" 
     );
   };
 
@@ -2229,7 +2367,7 @@ export default function ViewTrackOrderPage() {
                       key={item.checkout_id}
                       style={[
                         styles.groupItemRow,
-                        item.item_status === "cancelled" &&
+                        item.shop_status === "cancelled" &&
                           styles.cancelledProductCard,
                       ]}
                     >
@@ -2241,7 +2379,7 @@ export default function ViewTrackOrderPage() {
                         }}
                         style={[
                           styles.groupItemImage,
-                          item.item_status === "cancelled" &&
+                          item.shop_status === "cancelled" &&
                             styles.cancelledImage,
                         ]}
                       />
@@ -2249,7 +2387,7 @@ export default function ViewTrackOrderPage() {
                         <Text
                           style={[
                             styles.groupItemName,
-                            item.item_status === "cancelled" &&
+                            item.shop_status === "cancelled" &&
                               styles.cancelledText,
                           ]}
                           numberOfLines={2}
@@ -2259,7 +2397,7 @@ export default function ViewTrackOrderPage() {
                         <Text
                           style={[
                             styles.groupItemMeta,
-                            item.item_status === "cancelled" &&
+                            item.shop_status === "cancelled" &&
                               styles.cancelledText,
                           ]}
                           numberOfLines={1}
@@ -2269,43 +2407,59 @@ export default function ViewTrackOrderPage() {
                         <Text
                           style={[
                             styles.groupItemMeta,
-                            item.item_status === "cancelled" &&
+                            item.shop_status === "cancelled" &&
                               styles.cancelledText,
                           ]}
                         >
                           Quantity: {formatNumber(item.quantity)}
                         </Text>
 
-                        {/* Item Status */}
-                        {item.item_status && (
+                        {/* USE shop_status for display - this is the per-shop status from OrderShopStatus */}
+                        {item.shop_status && (
                           <Text
                             style={[
                               styles.groupItemStatus,
-                              item.item_status === "delivered" && {
+                              item.shop_status === "delivered" && {
                                 color: "#10B981",
                               },
-                              item.item_status === "shipped" && {
+                              item.shop_status === "completed" && {
+                                color: "#10B981",
+                              },
+                              item.shop_status === "shipped" && {
                                 color: "#3B82F6",
                               },
-                              item.item_status === "pending" && {
+                              item.shop_status === "ready" && {
+                                color: "#3B82F6",
+                              },
+                              item.shop_status === "to_deliver" && {
+                                color: "#8B5CF6",
+                              },
+                              item.shop_status === "rider_assigned" && {
+                                color: "#8B5CF6",
+                              },
+                              item.shop_status === "pending" && {
                                 color: "#F59E0B",
                               },
-                              item.item_status === "processing" && {
+                              item.shop_status === "processing" && {
                                 color: "#F59E0B",
                               },
-                              item.item_status === "cancelled" && {
+                              item.shop_status === "confirmed" && {
+                                color: "#10B981",
+                              },
+                              item.shop_status === "cancelled" && {
                                 color: "#EF4444",
                               },
                             ]}
                           >
                             Status:{" "}
-                            {item.item_status.charAt(0).toUpperCase() +
-                              item.item_status.slice(1).replace(/_/g, " ")}
+                            {item.shop_status.charAt(0).toUpperCase() +
+                              item.shop_status.slice(1).replace(/_/g, " ")}
                           </Text>
                         )}
 
-                        {/* Action Buttons for delivered/completed items */}
-                        {(item.item_status === "delivered" || item.item_status === "completed") && (
+                        {/* Action Buttons - only show when shop_status is delivered or completed */}
+                        {(item.shop_status === "delivered" ||
+                          item.shop_status === "completed") && (
                           <View style={styles.itemActionButtonsContainer}>
                             {/* Return/Refund Button */}
                             {item.can_return && item.is_refundable && (
@@ -2352,7 +2506,7 @@ export default function ViewTrackOrderPage() {
                         <Text
                           style={[
                             styles.currentPrice,
-                            item.item_status === "cancelled" &&
+                            item.shop_status === "cancelled" &&
                               styles.cancelledPrice,
                           ]}
                         >
@@ -2361,7 +2515,7 @@ export default function ViewTrackOrderPage() {
                         <Text
                           style={[
                             styles.groupItemSubtotal,
-                            item.item_status === "cancelled" &&
+                            item.shop_status === "cancelled" &&
                               styles.cancelledText,
                           ]}
                         >
@@ -2464,81 +2618,111 @@ export default function ViewTrackOrderPage() {
           </View>
         </View>
       </ScrollView>
-
-      {/* Sticky Action Buttons */}
-      {hasActions() && (
-        <View style={styles.stickyFooter}>
-          <View style={styles.actionButtonsContainer}>
-            {(actions.can_cancel ||
-              (orderStatusLower === "rider_assigned" &&
-                order?.delivery_status?.toLowerCase() === "pending")) && (
-              <TouchableOpacity
-                style={styles.cancelOrderButton}
-                onPress={handleCancelOrder}
-              >
-                <Text style={styles.cancelOrderButtonText}>Cancel Order</Text>
-              </TouchableOpacity>
-            )}
-
-            {(orderStatusLower === "delivered" ||
-              orderStatusLower === "picked_up") && (
-              <TouchableOpacity
-                style={styles.orderReceivedButton}
-                onPress={handleOrderReceived}
-              >
-                <Text style={styles.orderReceivedButtonText}>
-                  Order Received
-                </Text>
-              </TouchableOpacity>
-            )}
-
-            {/* Refund and Rate buttons - Show if order has reviewable or returnable items */}
-            {(actions.can_review || actions.can_return) && (() => {
-              const refundDate = order.refund_expire_date;
-              const hasRefundDate = refundDate !== null && refundDate !== undefined && refundDate !== "";
-              const isRefundExpired = hasRefundDate && new Date(refundDate) < new Date();
-              const isPickupMethod = String(shipping_info?.delivery_method || "").toLowerCase().includes("pickup");
-              const isDisabled = isRefundExpired || isPickupMethod;
-
-              return (
-                <>
-                  {actions.can_return && (
-                    <TouchableOpacity
-                      style={[
-                        styles.requestRefundButton,
-                        isDisabled && styles.requestRefundButtonDisabled,
-                      ]}
-                      onPress={() => {
-                        if (isRefundExpired) {
-                          Alert.alert("Refund Period Expired", "The refund period for this order has expired.");
-                        } else if (isPickupMethod) {
-                          Alert.alert("Pickup Orders", "Refunds are not available for pickup orders.");
-                        } else {
-                          router.push(`/customer/request-refund?orderId=${order.id}`);
-                        }
-                      }}
-                      disabled={isDisabled}
-                    >
-                      <Text style={[styles.requestRefundButtonText, isDisabled && styles.requestRefundButtonTextDisabled]}>
-                        Request Refund {isPickupMethod ? "(Not Available)" : isRefundExpired ? "(Expired)" : ""}
-                      </Text>
-                    </TouchableOpacity>
-                  )}
-
-                  {actions.can_review && (
-                    <TouchableOpacity
-                      style={styles.rateButton}
-                      onPress={() => setRateModalVisible(true)}
-                    >
-                      <Text style={styles.rateButtonText}>Rate Products</Text>
-                    </TouchableOpacity>
-                  )}
-                </>
-              );
-            })()}
-          </View>
-        </View>
+{/* Sticky Action Buttons */}
+{hasActions() && (
+  <View style={styles.stickyFooter}>
+    <View style={styles.actionButtonsContainer}>
+      {(actions.can_cancel ||
+        (orderStatusLower === "rider_assigned" &&
+          order?.delivery_status?.toLowerCase() === "pending")) && (
+        <TouchableOpacity
+          style={styles.cancelOrderButton}
+          onPress={handleCancelOrder}
+        >
+          <Text style={styles.cancelOrderButtonText}>Cancel Order</Text>
+        </TouchableOpacity>
       )}
+
+      {(orderStatusLower === "delivered" ||
+        orderStatusLower === "picked_up" ||
+        orderStatusLower === "partially_delivered") && (
+        <TouchableOpacity
+          style={styles.orderReceivedButton}
+          onPress={handleOrderReceived}
+        >
+          <Text style={styles.orderReceivedButtonText}>Order Received</Text>
+        </TouchableOpacity>
+      )}
+
+      {/* Refund and Rate buttons - Show if order has reviewable or returnable items */}
+      {/* Show for delivered, partially_delivered, or completed */}
+      {(orderStatusLower === "delivered" || 
+        orderStatusLower === "partially_delivered" || 
+        orderStatusLower === "completed") && 
+        (actions.can_review || actions.can_return) &&
+        (() => {
+          const refundDate = order.refund_expire_date;
+          const hasRefundDate =
+            refundDate !== null &&
+            refundDate !== undefined &&
+            refundDate !== "";
+          const isRefundExpired =
+            hasRefundDate && new Date(refundDate) < new Date();
+          const isPickupMethod = String(
+            shipping_info?.delivery_method || "",
+          )
+            .toLowerCase()
+            .includes("pickup");
+          const isDisabled = isRefundExpired || isPickupMethod;
+
+          return (
+            <>
+              {actions.can_return && (
+                <TouchableOpacity
+                  style={[
+                    styles.requestRefundButton,
+                    isDisabled && styles.requestRefundButtonDisabled,
+                  ]}
+                  onPress={() => {
+                    if (isRefundExpired) {
+                      Alert.alert(
+                        "Refund Period Expired",
+                        "The refund period for this order has expired.",
+                      );
+                    } else if (isPickupMethod) {
+                      Alert.alert(
+                        "Pickup Orders",
+                        "Refunds are not available for pickup orders.",
+                      );
+                    } else {
+                      router.push(
+                        `/customer/request-refund?orderId=${order.id}`,
+                      );
+                    }
+                  }}
+                  disabled={isDisabled}
+                >
+                  <Text
+                    style={[
+                      styles.requestRefundButtonText,
+                      isDisabled &&
+                        styles.requestRefundButtonTextDisabled,
+                    ]}
+                  >
+                    Request Refund{" "}
+                    {isPickupMethod
+                      ? "(Not Available)"
+                      : isRefundExpired
+                        ? "(Expired)"
+                        : ""}
+                  </Text>
+                </TouchableOpacity>
+              )}
+
+              {actions.can_review && (
+                <TouchableOpacity
+                  style={styles.rateButton}
+                  onPress={() => setRateModalVisible(true)}
+                >
+                  <Text style={styles.rateButtonText}>Rate Products</Text>
+                </TouchableOpacity>
+              )}
+            </>
+          );
+        })()}
+    </View>
+  </View>
+)}
 
       <RateItemModal
         visible={rateModalVisible}
@@ -3745,5 +3929,38 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "500",
     color: "#D97706",
+  },
+  cancelReasonText: {
+    fontSize: 10,
+    color: "#EF4444",
+    marginTop: 4,
+    fontStyle: "italic",
+  },
+  cancelItemBlockedIcon: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: "#F3F4F6",
+    justifyContent: "center",
+    alignItems: "center",
+    marginLeft: 8,
+  },
+  noCancelItemsContainer: {
+    alignItems: "center",
+    paddingVertical: 40,
+    paddingHorizontal: 20,
+  },
+  noCancelItemsText: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#374151",
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  noCancelItemsSubtext: {
+    fontSize: 12,
+    color: "#6B7280",
+    textAlign: "center",
+    lineHeight: 16,
   },
 });
