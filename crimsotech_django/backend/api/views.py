@@ -25427,7 +25427,7 @@ class SellerOrderList(viewsets.ViewSet):
             }, status=status.HTTP_200_OK)
         except Exception as e:
             return Response({"success": False, "message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        
+
     @action(detail=False, methods=['post'])
     def assign_deliveries(self, request):
         try:
@@ -25511,6 +25511,20 @@ class SellerOrderList(viewsets.ViewSet):
             rider_distances = []
             rider_comparison = []
             
+            # Get the actual shipping fee from order metadata for this shop
+            # Priority: 1. Use shipping_fees_breakdown from order metadata
+            #           2. Calculate based on distance as fallback
+            actual_delivery_fee = None
+            
+            if hasattr(order, 'shipping_fees_breakdown') and order.shipping_fees_breakdown:
+                shop_shipping_fee = order.shipping_fees_breakdown.get(str(shop.id))
+                if shop_shipping_fee is not None:
+                    try:
+                        actual_delivery_fee = Decimal(str(shop_shipping_fee))
+                        print(f"✅ Using actual shipping fee from order.shipping_fees_breakdown: ₱{actual_delivery_fee} for shop {shop.name}")
+                    except (ValueError, TypeError):
+                        actual_delivery_fee = None
+            
             for rider in available_riders:
                 if not (rider.rider.latitude and rider.rider.longitude):
                     continue
@@ -25532,13 +25546,23 @@ class SellerOrderList(viewsets.ViewSet):
                 distance_pickup_to_dest = self._calculate_driving_distance(pickup_lat, pickup_lng, dest_lat, dest_lng)
                 total_distance = distance_to_pickup + distance_pickup_to_dest
                 
+                # Use the actual fee if available, otherwise calculate
+                if actual_delivery_fee is not None:
+                    delivery_fee = actual_delivery_fee
+                    estimated_minutes = self._calculate_estimated_time(total_distance)
+                else:
+                    delivery_fee = Decimal(str(self._calculate_delivery_fee(total_distance)))
+                    estimated_minutes = self._calculate_estimated_time(total_distance)
+                
                 rider_distances.append({
                     'rider': rider,
                     'total_distance': total_distance,
                     'distance_to_pickup': distance_to_pickup,
                     'distance_pickup_to_dest': distance_pickup_to_dest,
                     'rider_lat': rider_lat,
-                    'rider_lng': rider_lng
+                    'rider_lng': rider_lng,
+                    'delivery_fee': delivery_fee,
+                    'estimated_minutes': estimated_minutes
                 })
                 
                 rider_name = f"{rider.rider.first_name} {rider.rider.last_name}".strip() or rider.rider.username
@@ -25549,7 +25573,9 @@ class SellerOrderList(viewsets.ViewSet):
                     'plate_number': rider.plate_number,
                     'distance_to_pickup_km': round(distance_to_pickup, 2),
                     'distance_pickup_to_dest_km': round(distance_pickup_to_dest, 2),
-                    'total_distance_km': round(total_distance, 2)
+                    'total_distance_km': round(total_distance, 2),
+                    'delivery_fee': float(delivery_fee),
+                    'estimated_minutes': estimated_minutes
                 })
             
             if not rider_distances:
@@ -25566,6 +25592,7 @@ class SellerOrderList(viewsets.ViewSet):
                     }
                 }, status=status.HTTP_200_OK)
             
+            # Sort by total distance (nearest first)
             rider_distances.sort(key=lambda x: x['total_distance'])
             rider_comparison.sort(key=lambda x: x['total_distance_km'])
             
@@ -25575,8 +25602,9 @@ class SellerOrderList(viewsets.ViewSet):
             distance_to_pickup = nearest['distance_to_pickup']
             distance_pickup_to_dest = nearest['distance_pickup_to_dest']
             
-            delivery_fee = self._calculate_delivery_fee(total_distance)
-            estimated_minutes = self._calculate_estimated_time(total_distance)
+            # Use the actual fee from the nearest rider's calculated fee
+            delivery_fee = nearest['delivery_fee']
+            estimated_minutes = nearest['estimated_minutes']
             
             existing_delivery = Delivery.objects.filter(order=order, shop=shop).first()
 
@@ -25585,18 +25613,19 @@ class SellerOrderList(viewsets.ViewSet):
                 existing_delivery.status = 'pending'
                 existing_delivery.distance_km = Decimal(str(total_distance))
                 existing_delivery.estimated_minutes = estimated_minutes
-                existing_delivery.delivery_fee = Decimal(str(delivery_fee))
+                existing_delivery.delivery_fee = delivery_fee
                 existing_delivery.metadata = {
                     'distance_to_pickup': distance_to_pickup,
                     'distance_pickup_to_dest': distance_pickup_to_dest,
                     'pickup_location': {'lat': pickup_lat, 'lng': pickup_lng, 'name': pickup_name},
                     'destination_location': {'lat': dest_lat, 'lng': dest_lng},
                     'all_riders_compared': rider_comparison,
+                    'shop_id': str(shop.id),
                     'nearest_rider': {
                         'name': f"{selected_rider.rider.first_name} {selected_rider.rider.last_name}".strip() or selected_rider.rider.username,
                         'username': selected_rider.rider.username,
                         'total_distance_km': round(total_distance, 2),
-                        'delivery_fee': delivery_fee,
+                        'delivery_fee': float(delivery_fee),
                         'estimated_minutes': estimated_minutes
                     }
                 }
@@ -25610,22 +25639,34 @@ class SellerOrderList(viewsets.ViewSet):
                     status='pending',
                     distance_km=Decimal(str(total_distance)),
                     estimated_minutes=estimated_minutes,
-                    delivery_fee=Decimal(str(delivery_fee)),
+                    delivery_fee=delivery_fee,
                     metadata={
                         'distance_to_pickup': distance_to_pickup,
                         'distance_pickup_to_dest': distance_pickup_to_dest,
                         'pickup_location': {'lat': pickup_lat, 'lng': pickup_lng, 'name': pickup_name},
                         'destination_location': {'lat': dest_lat, 'lng': dest_lng},
                         'all_riders_compared': rider_comparison,
+                        'shop_id': str(shop.id),
                         'nearest_rider': {
                             'name': f"{selected_rider.rider.first_name} {selected_rider.rider.last_name}".strip() or selected_rider.rider.username,
                             'username': selected_rider.rider.username,
                             'total_distance_km': round(total_distance, 2),
-                            'delivery_fee': delivery_fee,
+                            'delivery_fee': float(delivery_fee),
                             'estimated_minutes': estimated_minutes
                         }
                     }
                 )
+            
+            # Also update the checkout's shipping_fee to match the actual fee for this shop
+            shop_checkouts = Checkout.objects.filter(
+                Q(order=order, cart_item__product__shop=shop) |
+                Q(order=order, direct_shop_id=str(shop.id))
+            )
+            for checkout in shop_checkouts:
+                if checkout.shipping_fee != float(delivery_fee):
+                    checkout.shipping_fee = float(delivery_fee)
+                    checkout.save(update_fields=['shipping_fee'])
+                    print(f"✅ Updated checkout {checkout.id} shipping_fee to ₱{delivery_fee}")
             
             Notification.objects.create(
                 user=selected_rider.rider,
@@ -25653,14 +25694,19 @@ class SellerOrderList(viewsets.ViewSet):
                         "name": nearest_rider_name,
                         "username": selected_rider.rider.username,
                         "total_distance_km": round(total_distance, 2),
-                        "delivery_fee": delivery_fee,
+                        "delivery_fee": float(delivery_fee),
                         "estimated_minutes": estimated_minutes
                     },
-                    "all_riders_compared": rider_comparison
+                    "all_riders_compared": rider_comparison,
+                    "shipping_fee_used": float(delivery_fee),
+                    "shipping_fee_source": "order.shipping_fees_breakdown" if actual_delivery_fee is not None else "calculated_from_distance"
                 }
             }, status=status.HTTP_200_OK)
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             return Response({"success": False, "message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
     @action(detail=False, methods=['post'])
     def check_delivery_responses(self, request):
