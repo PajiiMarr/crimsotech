@@ -59,7 +59,7 @@ interface OrderItem {
   };
   can_review: boolean;
   can_return: boolean;
-  is_refundable: boolean; // ← ADD THIS LINE
+  is_refundable: boolean;
   return_deadline: string | null;
   shipping_fee?: string;
   distance_km?: number | null;
@@ -313,6 +313,7 @@ export default function ViewTrackOrderPage() {
               },
               can_review: item.can_review ?? false,
               can_return: item.can_return ?? false,
+              is_refundable: item.is_refundable ?? false,
               return_deadline: item.return_deadline ?? null,
             }))
           : [];
@@ -1532,8 +1533,6 @@ export default function ViewTrackOrderPage() {
     actions,
   } = orderData;
 
-  // FIX: Use item_status instead of shop_status for individual item display
-  // For overall order display, still use order.status
   const orderStatusLower = String(order?.status || "").toLowerCase();
 
   const groupedItemsByShop = groupItemsByShop(items);
@@ -2305,8 +2304,8 @@ export default function ViewTrackOrderPage() {
                           </Text>
                         )}
 
-                        {/* Action Buttons for delivered items */}
-                        {item.item_status === "delivered" && (
+                        {/* Action Buttons for delivered/completed items */}
+                        {(item.item_status === "delivered" || item.item_status === "completed") && (
                           <View style={styles.itemActionButtonsContainer}>
                             {/* Return/Refund Button */}
                             {item.can_return && item.is_refundable && (
@@ -2493,26 +2492,17 @@ export default function ViewTrackOrderPage() {
               </TouchableOpacity>
             )}
 
-            {/* Refund and Rate buttons - Show for delivered OR completed orders */}
-            {(orderStatusLower === "delivered" ||
-              orderStatusLower === "completed") &&
-              (() => {
-                const refundDate = order.refund_expire_date;
-                const hasRefundDate =
-                  refundDate !== null &&
-                  refundDate !== undefined &&
-                  refundDate !== "";
-                const isRefundExpired =
-                  hasRefundDate && new Date(refundDate) < new Date();
-                const isPickupMethod = String(
-                  shipping_info?.delivery_method || "",
-                )
-                  .toLowerCase()
-                  .includes("pickup");
-                const isDisabled = isRefundExpired || isPickupMethod;
+            {/* Refund and Rate buttons - Show if order has reviewable or returnable items */}
+            {(actions.can_review || actions.can_return) && (() => {
+              const refundDate = order.refund_expire_date;
+              const hasRefundDate = refundDate !== null && refundDate !== undefined && refundDate !== "";
+              const isRefundExpired = hasRefundDate && new Date(refundDate) < new Date();
+              const isPickupMethod = String(shipping_info?.delivery_method || "").toLowerCase().includes("pickup");
+              const isDisabled = isRefundExpired || isPickupMethod;
 
-                return (
-                  <>
+              return (
+                <>
+                  {actions.can_return && (
                     <TouchableOpacity
                       style={[
                         styles.requestRefundButton,
@@ -2520,47 +2510,32 @@ export default function ViewTrackOrderPage() {
                       ]}
                       onPress={() => {
                         if (isRefundExpired) {
-                          Alert.alert(
-                            "Refund Period Expired",
-                            "The refund period for this order has expired. You can no longer request a refund for this order.",
-                          );
+                          Alert.alert("Refund Period Expired", "The refund period for this order has expired.");
                         } else if (isPickupMethod) {
-                          Alert.alert(
-                            "Pickup Orders",
-                            "Refunds are not available for pickup orders. Please contact the seller directly.",
-                          );
+                          Alert.alert("Pickup Orders", "Refunds are not available for pickup orders.");
                         } else {
-                          router.push(
-                            `/customer/request-refund?orderId=${order.id}`,
-                          );
+                          router.push(`/customer/request-refund?orderId=${order.id}`);
                         }
                       }}
                       disabled={isDisabled}
                     >
-                      <Text
-                        style={[
-                          styles.requestRefundButtonText,
-                          isDisabled && styles.requestRefundButtonTextDisabled,
-                        ]}
-                      >
-                        Request Refund{" "}
-                        {isPickupMethod
-                          ? "(Not Available)"
-                          : isRefundExpired
-                            ? "(Expired)"
-                            : ""}
+                      <Text style={[styles.requestRefundButtonText, isDisabled && styles.requestRefundButtonTextDisabled]}>
+                        Request Refund {isPickupMethod ? "(Not Available)" : isRefundExpired ? "(Expired)" : ""}
                       </Text>
                     </TouchableOpacity>
+                  )}
 
+                  {actions.can_review && (
                     <TouchableOpacity
                       style={styles.rateButton}
                       onPress={() => setRateModalVisible(true)}
                     >
                       <Text style={styles.rateButtonText}>Rate Products</Text>
                     </TouchableOpacity>
-                  </>
-                );
-              })()}
+                  )}
+                </>
+              );
+            })()}
           </View>
         </View>
       )}
