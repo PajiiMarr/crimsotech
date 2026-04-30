@@ -2462,7 +2462,7 @@ export default function ViewTrackOrderPage() {
                           item.shop_status === "completed") && (
                           <View style={styles.itemActionButtonsContainer}>
                             {/* Mark as Received Button - For delivered items that aren't completed yet */}
-                            {item.shop_status === "delivered"  || item.item_status === "delivered" && (
+                            {(item.shop_status === "delivered" || item.item_status === "delivered") && (
                               <TouchableOpacity
                                 style={styles.receiveItemButton}
                                 onPress={() =>
