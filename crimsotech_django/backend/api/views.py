@@ -4734,7 +4734,7 @@ class AdminShops(viewsets.ViewSet):
 
         return start_date, end_date
 
-    # ── Helper to get shop sales with breakdown ─────────────────────────────────
+    # ── Helper to get shop sales with breakdown (using metadata) ─────────────────
 
     def get_shop_sales_breakdown(self, shop, start_date=None, end_date=None):
         """
@@ -4820,12 +4820,31 @@ class AdminShops(viewsets.ViewSet):
             # Platform fees (5% of completed revenue only)
             platform_fees = completed_revenue * Decimal('0.05')
 
-            # Shipping fees from completed orders - get from Delivery model
+            # Shipping fees from completed orders - USE METADATA (avoid Delivery.shop)
             shipping_fees = Decimal('0')
             for order in completed_orders:
-                delivery = Delivery.objects.filter(order=order, status='delivered').first()
-                if delivery and delivery.delivery_fee:
-                    shipping_fees += Decimal(str(delivery.delivery_fee))
+                # Try to get shipping fee from order's shipping_fees_breakdown
+                if hasattr(order, 'shipping_fees_breakdown') and order.shipping_fees_breakdown:
+                    shop_shipping_fee = order.shipping_fees_breakdown.get(str(shop.id), 0)
+                    shipping_fees += Decimal(str(shop_shipping_fee))
+                elif hasattr(order, 'shipping_fee') and order.shipping_fee:
+                    # If no breakdown, try to prorate based on order total
+                    order_total = Decimal(str(order.total_amount))
+                    shop_total = Decimal('0')
+                    for checkout in checkouts_qs.filter(order=order):
+                        shop_total += checkout.total_amount
+                    if order_total > 0 and shop_total > 0:
+                        prorated_fee = Decimal(str(order.shipping_fee)) * (shop_total / order_total)
+                        shipping_fees += prorated_fee
+                else:
+                    # Last resort: check delivery metadata for this shop
+                    delivery = Delivery.objects.filter(
+                        order=order,
+                        status='delivered'
+                    ).first()
+                    if delivery and delivery.metadata and delivery.metadata.get('shop_id') == str(shop.id):
+                        if delivery.delivery_fee:
+                            shipping_fees += Decimal(str(delivery.delivery_fee))
 
             # Order counts by status
             order_status_counts = {
@@ -5269,12 +5288,13 @@ class AdminShops(viewsets.ViewSet):
             
             platform_fees = completed_revenue * Decimal('0.05')
             
-            # Shipping fees from completed orders - get from Delivery model
+            # Shipping fees from completed orders - USE METADATA (avoid Delivery.shop)
             shipping_fees = Decimal('0')
             for order in completed_orders_in_period:
-                delivery = Delivery.objects.filter(order=order, status='delivered').first()
-                if delivery and delivery.delivery_fee:
-                    shipping_fees += Decimal(str(delivery.delivery_fee))
+                if hasattr(order, 'shipping_fees_breakdown') and order.shipping_fees_breakdown:
+                    shipping_fees += Decimal(str(sum(order.shipping_fees_breakdown.values())))
+                elif hasattr(order, 'shipping_fee') and order.shipping_fee:
+                    shipping_fees += Decimal(str(order.shipping_fee))
 
             # Calculate active shops (status = 'Active' and not suspended)
             active_shops = all_shops_qs.filter(status='Active', is_suspended=False).count()
@@ -5749,7 +5769,7 @@ class AdminShops(viewsets.ViewSet):
                 # Get favorite count
                 favorites_count = Favorites.objects.filter(product=product).count()
                 
-                # Get order statistics - IMPORTANT: Include ALL orders, not just completed
+                # Get order statistics
                 order_stats = Checkout.objects.filter(
                     Q(cart_item__product=product) | Q(direct_product_id=product.id)
                 ).aggregate(
@@ -6425,7 +6445,6 @@ class AdminShops(viewsets.ViewSet):
                 {'success': False, 'error': f'Error retrieving pending shops: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-
 
 class AdminBoosting(viewsets.ViewSet):
     def parse_date(self, date_str):
