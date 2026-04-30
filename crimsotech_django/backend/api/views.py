@@ -30074,7 +30074,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                                 'name': checkout.voucher.name,
                                 'code': checkout.voucher.code
                             } if checkout.voucher else None,
-                            'can_review': item_status == 'delivered' and not has_reviewed,
+                            'can_review': (item_status == 'delivered' or item_status == 'completed') and not has_reviewed,
                             'is_refundable': is_refundable,
                             'shipping_fee': str(getattr(checkout, 'shipping_fee', 0.00)),
                             'distance_km': getattr(checkout, 'distance_km', None),
@@ -30163,7 +30163,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                                     'name': checkout.voucher.name,
                                     'code': checkout.voucher.code
                                 } if checkout.voucher else None,
-                                'can_review': item_status == 'delivered' and not has_reviewed,
+                                'can_review': (item_status == 'delivered' or item_status == 'completed') and not has_reviewed,
                                 'is_refundable': is_refundable,
                                 'shipping_fee': str(getattr(checkout, 'shipping_fee', 0.00)),
                             }
@@ -30426,7 +30426,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                         'name': checkout.voucher.name,
                         'code': checkout.voucher.code
                     } if checkout.voucher else None,
-                    'can_review': item_status == 'delivered' and not has_reviewed,
+                    'can_review': (item_status == 'delivered' or item_status == 'completed') and not has_reviewed,
                     'shipping_fee': str(getattr(checkout, 'shipping_fee', 0.00)),
                 }
                 items_data.append(item_data)
