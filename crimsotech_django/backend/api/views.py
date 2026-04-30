@@ -30477,6 +30477,7 @@ class PurchasesBuyer(viewsets.ViewSet):
         }
         
         return Response(order_data)
+
             
     @action(detail=True, methods=['get'], url_path='view-order')
     def view_order_detail(self, request, pk=None):
@@ -30620,6 +30621,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                             'is_new': False,
                         }
                     
+                    # Check if user has already reviewed this product
                     has_reviewed = False
                     try:
                         customer_profile = Customer.objects.get(customer=user)
@@ -30629,6 +30631,17 @@ class PurchasesBuyer(viewsets.ViewSet):
                         ).exists()
                     except Customer.DoesNotExist:
                         has_reviewed = False
+                    
+                    # Check if this item has already been refunded
+                    has_refunded = False
+                    try:
+                        has_refunded = Refund.objects.filter(
+                            order_id=order,
+                            items__checkout=checkout,
+                            status__in=['completed', 'approved']
+                        ).exists()
+                    except Exception:
+                        has_refunded = False
                     
                     # Use checkout.status for per-item status
                     item_status = checkout.status if hasattr(checkout, 'status') else 'pending'
@@ -30642,10 +30655,12 @@ class PurchasesBuyer(viewsets.ViewSet):
                         except OrderShopStatus.DoesNotExist:
                             shop_status = 'pending'
                     
-                    # FIX: Include 'completed' status for can_review and can_return
                     # Allow review and return for both 'delivered' AND 'completed' items
-                    can_review = (item_status == 'delivered' or item_status == 'completed') and not has_reviewed
-                    can_return = (item_status == 'delivered' or item_status == 'completed') and not has_reviewed
+                    can_review = (item_status == 'delivered' or item_status == 'completed')
+                    can_return = (item_status == 'delivered' or item_status == 'completed') and not has_refunded
+                    
+                    # If already refunded, is_refundable should be false
+                    is_refundable = variant_is_refundable and not has_refunded
                     
                     item_data = {
                         'checkout_id': str(checkout.id),
@@ -30668,7 +30683,9 @@ class PurchasesBuyer(viewsets.ViewSet):
                         'shop_info': shop_info,
                         'can_review': can_review,
                         'can_return': can_return,
-                        'is_refundable': variant_is_refundable,
+                        'has_reviewed': has_reviewed,
+                        'has_refunded': has_refunded,
+                        'is_refundable': is_refundable,
                         'return_deadline': (checkout.created_at + timedelta(days=14)).isoformat() if checkout.created_at else None,
                         'shipping_fee': str(getattr(checkout, 'shipping_fee', 0.00)),
                         'distance_km': getattr(checkout, 'distance_km', None),
@@ -30703,6 +30720,8 @@ class PurchasesBuyer(viewsets.ViewSet):
                         'voucher_applied': None,
                         'can_review': False,
                         'can_return': False,
+                        'has_reviewed': False,
+                        'has_refunded': False,
                         'is_refundable': False
                     }
                     items_data.append(item_data)
@@ -30781,6 +30800,7 @@ class PurchasesBuyer(viewsets.ViewSet):
         except Exception as exc:
             logger.exception('Unhandled exception in view_order_detail for order %s user %s: %s', pk, user_id, exc)
             return Response({'error': 'An internal error occurred while fetching the order'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
 
     def _get_item_status(self, order, checkout):
