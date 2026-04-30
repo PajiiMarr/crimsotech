@@ -95,7 +95,7 @@ interface Order {
   pickup_date?: string | null;
 }
 
-// Status configuration based on order flow
+// Status configuration based on order flow for SELLER view (using shop_status)
 const STATUS_CONFIG: Record<
   string,
   {
@@ -106,25 +106,25 @@ const STATUS_CONFIG: Record<
     order: number;
   }
 > = {
-  pending_shipment: {
+  pending: {
     label: "Pending",
     color: "#f59e0b",
     bgColor: "#fffbeb",
     icon: "time-outline",
     order: 1,
   },
+  confirmed: {
+    label: "Confirmed",
+    color: "#10b981",
+    bgColor: "#ecfdf5",
+    icon: "checkmark-circle-outline",
+    order: 2,
+  },
   processing: {
     label: "Processing",
     color: "#f59e0b",
     bgColor: "#fffbeb",
     icon: "refresh-outline",
-    order: 2,
-  },
-  ready_to_ship: {
-    label: "Ready to Ship",
-    color: "#3b82f6",
-    bgColor: "#eff6ff",
-    icon: "cube-outline",
     order: 3,
   },
   rider_assigned: {
@@ -132,84 +132,49 @@ const STATUS_CONFIG: Record<
     color: "#8B5CF6",
     bgColor: "#F5F3FF",
     icon: "person-outline",
-    order: 3,
-  },
-  rider_accepted: {
-    label: "Rider Accepted",
-    color: "#10B981",
-    bgColor: "#ECFDF5",
-    icon: "checkmark-circle-outline",
     order: 4,
   },
-  pending_rider: {
-    label: "Pending Rider",
-    color: "#f97316",
-    bgColor: "#fff7ed",
-    icon: "time-outline",
-    order: 3,
-  },
-  waiting_for_rider: {
-    label: "Waiting for Rider",
-    color: "#f97316",
-    bgColor: "#fff7ed",
-    icon: "person-outline",
-    order: 4,
-  },
-  waiting_for_pickup: {
-    label: "Waiting Pickup",
-    color: "#f97316",
-    bgColor: "#fff7ed",
+  ready: {
+    label: "Ready to Ship",
+    color: "#3b82f6",
+    bgColor: "#eff6ff",
     icon: "cube-outline",
-    order: 4,
+    order: 5,
   },
   shipped: {
     label: "Shipped",
     color: "#3b82f6",
     bgColor: "#eff6ff",
     icon: "car-outline",
-    order: 5,
+    order: 6,
   },
   to_deliver: {
     label: "Out for Delivery",
     color: "#8b5cf6",
     bgColor: "#f5f3ff",
     icon: "car-outline",
-    order: 6,
+    order: 7,
   },
   delivered: {
     label: "Delivered",
     color: "#10b981",
     bgColor: "#ecfdf5",
     icon: "checkmark-circle-outline",
-    order: 7,
-  },
-  completed: {
-    label: "Completed",
-    color: "#10b981",
-    bgColor: "#ecfdf5",
-    icon: "checkmark-circle-outline",
     order: 8,
-  },
-  ready_for_pickup: {
-    label: "Ready for Pickup",
-    color: "#3b82f6",
-    bgColor: "#eff6ff",
-    icon: "storefront-outline",
-    order: 3,
   },
   picked_up: {
     label: "Picked Up",
     color: "#10b981",
     bgColor: "#ecfdf5",
     icon: "checkmark-circle-outline",
-    order: 5,
+    order: 8,
   },
-  partially_delivered: {
-    label: "Partially Delivered",
-    color: "#8b5cf6",
-    bgColor: "#f5f3ff",
-    icon: "cube-outline",
-    order: 6,
+  completed: {
+    label: "Completed",
+    color: "#10b981",
+    bgColor: "#ecfdf5",
+    icon: "checkmark-circle-outline",
+    order: 9,
   },
   cancelled: {
     label: "Cancelled",
@@ -234,26 +199,18 @@ const STATUS_CONFIG: Record<
   },
 };
 
-// Tabs configuration - Only show relevant statuses
+// Tabs configuration - Using shop_status values
 const STATUS_TABS = [
   { id: "all", label: "All", icon: "list-outline" },
-  // Shared
-  { id: "pending_shipment", label: "Pending", icon: "time-outline" },
+  { id: "pending", label: "Pending", icon: "time-outline" },
+  { id: "confirmed", label: "Confirmed", icon: "checkmark-circle-outline" },
   { id: "processing", label: "Processing", icon: "refresh-outline" },
-  // Delivery only
-  { id: "ready_to_ship", label: "Ready to Ship", icon: "cube-outline" },
   { id: "rider_assigned", label: "Rider Assigned", icon: "person-outline" },
-  { id: "rider_accepted", label: "Rider Accepted", icon: "checkmark-circle-outline" },
-  { id: "waiting_for_rider", label: "Waiting Rider", icon: "person-outline" },
+  { id: "ready", label: "Ready to Ship", icon: "cube-outline" },
   { id: "shipped", label: "Shipped", icon: "car-outline" },
   { id: "to_deliver", label: "Out for Delivery", icon: "car-outline" },
-  // Pickup only
-  { id: "ready_for_pickup", label: "Ready for Pickup", icon: "storefront-outline" },
-  { id: "picked_up", label: "Picked Up", icon: "checkmark-circle-outline" },
-  // Shared end states
   { id: "delivered", label: "Delivered", icon: "checkmark-circle-outline" },
   { id: "completed", label: "Completed", icon: "checkmark-circle-outline" },
-  { id: "partially_delivered", label: "Partially Delivered", icon: "cube-outline" },
   { id: "cancelled", label: "Cancelled", icon: "close-circle-outline" },
 ];
 
@@ -362,8 +319,8 @@ export default function Orders() {
 
     if (activeTab !== "all") {
       filtered = filtered.filter((order) => {
-        // Use global_order_status first, fall back to status
-        const orderStatus = (order.global_order_status || order.status || "").toLowerCase();
+        // FOR SELLER: Use shop_status (per-shop status) not global_order_status
+        const orderStatus = (order.shop_status || "").toLowerCase();
         return orderStatus === activeTab.toLowerCase();
       });
     }
@@ -400,7 +357,7 @@ export default function Orders() {
   const isPickupOrder = (order: Order) => order.is_pickup === true;
 
   const isCancelledOrder = (order: Order) => {
-    const status = (order.global_order_status || order.status || "").toLowerCase();
+    const status = (order.shop_status || "").toLowerCase();
     return status === "cancelled";
   };
 
@@ -409,24 +366,21 @@ export default function Orders() {
     order.delivery_info?.is_pending_offer === true;
 
   const isWaitingForRider = (order: Order): boolean => {
-    const status = (order.global_order_status || order.status || "").toLowerCase();
+    const status = (order.shop_status || "").toLowerCase();
     return status === "waiting_for_rider";
   };
 
   const isAwaitingMayaPayment = (order: Order): boolean => {
     const isMaya = order.payment_method?.toLowerCase() === "maya";
-    const status = (order.global_order_status || order.status || "").toLowerCase();
-    const isPendingShipment = status === "pending_shipment";
+    const status = (order.shop_status || "").toLowerCase();
+    const isPendingShipment = status === "pending";
     const actions = availableActions[order.order_id] || [];
     const canConfirm = actions.includes("confirm");
     return isMaya && isPendingShipment && !canConfirm;
   };
 
   const getDisplayStatus = (order: Order): string => {
-    // Priority: global_order_status first, then shop_status, then status
-    if (order.global_order_status) {
-      return order.global_order_status.toLowerCase();
-    }
+    // FOR SELLER: Use shop_status (per-shop status) as primary
     if (order.shop_status) {
       return order.shop_status.toLowerCase();
     }
@@ -480,24 +434,21 @@ export default function Orders() {
   const totalOrderAmount = orders.reduce((sum, order) => sum + (order.total_amount || 0), 0);
 
   const getOrderStatusKey = (order: Order): string => {
-    return (order.global_order_status || order.shop_status || order.status || "default").toLowerCase();
+    // FOR SELLER: Use shop_status for counts
+    return (order.shop_status || "default").toLowerCase();
   };
 
   const counts = {
     all: orders.length,
-    pending_shipment: orders.filter((o) => getOrderStatusKey(o) === "pending_shipment").length,
+    pending: orders.filter((o) => getOrderStatusKey(o) === "pending").length,
+    confirmed: orders.filter((o) => getOrderStatusKey(o) === "confirmed").length,
     processing: orders.filter((o) => getOrderStatusKey(o) === "processing").length,
-    ready_to_ship: orders.filter((o) => getOrderStatusKey(o) === "ready_to_ship").length,
     rider_assigned: orders.filter((o) => getOrderStatusKey(o) === "rider_assigned").length,
-    rider_accepted: orders.filter((o) => getOrderStatusKey(o) === "rider_accepted").length,
-    waiting_for_rider: orders.filter((o) => getOrderStatusKey(o) === "waiting_for_rider").length,
+    ready: orders.filter((o) => getOrderStatusKey(o) === "ready").length,
     shipped: orders.filter((o) => getOrderStatusKey(o) === "shipped").length,
     to_deliver: orders.filter((o) => getOrderStatusKey(o) === "to_deliver").length,
-    ready_for_pickup: orders.filter((o) => getOrderStatusKey(o) === "ready_for_pickup").length,
-    picked_up: orders.filter((o) => getOrderStatusKey(o) === "picked_up").length,
     delivered: orders.filter((o) => getOrderStatusKey(o) === "delivered").length,
     completed: orders.filter((o) => getOrderStatusKey(o) === "completed").length,
-    partially_delivered: orders.filter((o) => getOrderStatusKey(o) === "partially_delivered").length,
     cancelled: orders.filter((o) => getOrderStatusKey(o) === "cancelled").length,
   };
 
@@ -567,9 +518,15 @@ export default function Orders() {
               </View>
               <View style={styles.statCard}>
                 <Text style={[styles.statValue, { color: "#f59e0b" }]}>
-                  {counts.pending_shipment}
+                  {counts.pending}
                 </Text>
                 <Text style={styles.statLabel}>Pending</Text>
+              </View>
+              <View style={styles.statCard}>
+                <Text style={[styles.statValue, { color: "#10b981" }]}>
+                  {counts.confirmed}
+                </Text>
+                <Text style={styles.statLabel}>Confirmed</Text>
               </View>
               <View style={styles.statCard}>
                 <Text style={[styles.statValue, { color: "#f59e0b" }]}>
@@ -578,16 +535,16 @@ export default function Orders() {
                 <Text style={styles.statLabel}>Processing</Text>
               </View>
               <View style={styles.statCard}>
-                <Text style={[styles.statValue, { color: "#3b82f6" }]}>
-                  {counts.ready_to_ship}
+                <Text style={[styles.statValue, { color: "#8B5CF6" }]}>
+                  {counts.rider_assigned}
                 </Text>
-                <Text style={styles.statLabel}>Ready to Ship</Text>
+                <Text style={styles.statLabel}>Rider Assigned</Text>
               </View>
               <View style={styles.statCard}>
-                <Text style={[styles.statValue, { color: "#f97316" }]}>
-                  {counts.waiting_for_rider}
+                <Text style={[styles.statValue, { color: "#3b82f6" }]}>
+                  {counts.ready}
                 </Text>
-                <Text style={styles.statLabel}>Waiting Rider</Text>
+                <Text style={styles.statLabel}>Ready to Ship</Text>
               </View>
               <View style={styles.statCard}>
                 <Text style={[styles.statValue, { color: "#3b82f6" }]}>
@@ -612,12 +569,6 @@ export default function Orders() {
                   {counts.completed}
                 </Text>
                 <Text style={styles.statLabel}>Completed</Text>
-              </View>
-              <View style={styles.statCard}>
-                <Text style={[styles.statValue, { color: "#8b5cf6" }]}>
-                  {counts.partially_delivered}
-                </Text>
-                <Text style={styles.statLabel}>Partially Delivered</Text>
               </View>
             </View>
           </ScrollView>
@@ -702,23 +653,7 @@ export default function Orders() {
                 <Text style={styles.emptyText}>
                   {activeTab === "all"
                     ? "No orders found"
-                    : activeTab === "pending_shipment"
-                      ? "No pending orders"
-                      : activeTab === "processing"
-                        ? "No orders in processing"
-                        : activeTab === "ready_to_ship"
-                          ? "No orders ready to ship"
-                          : activeTab === "waiting_for_rider"
-                            ? "No orders waiting for rider"
-                            : activeTab === "shipped"
-                              ? "No shipped orders"
-                              : activeTab === "to_deliver"
-                                ? "No orders out for delivery"
-                                : activeTab === "delivered"
-                                  ? "No delivered orders"
-                                  : activeTab === "completed"
-                                    ? "No completed orders"
-                                    : "No cancelled orders"}
+                    : `No ${activeTab} orders`}
                 </Text>
               </View>
             ) : (
