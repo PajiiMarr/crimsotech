@@ -29746,8 +29746,13 @@ class PurchasesBuyer(viewsets.ViewSet):
         
         statuses = [c.status for c in checkouts]
         
+        # Add 'completed' to the priority list
         if all(s == 'cancelled' for s in statuses):
             new_status = 'cancelled'
+        elif all(s == 'completed' for s in statuses):
+            new_status = 'completed'  # ← Added this
+        elif all(s in ['completed', 'delivered'] for s in statuses):
+            new_status = 'completed'  # ← All items are either completed or delivered
         elif all(s == 'delivered' for s in statuses):
             new_status = 'delivered'
         elif any(s == 'delivered' for s in statuses):
@@ -29763,7 +29768,8 @@ class PurchasesBuyer(viewsets.ViewSet):
             order.status = new_status
             order.save(update_fields=['status'])
             print(f"📦 Order {order.order} status updated to: {new_status} (checkout statuses: {statuses})")
-    
+
+        
     @action(detail=False, methods=['get'], url_path='user-purchases')
     def user_purchases(self, request):
         user_id = request.headers.get('X-User-Id')

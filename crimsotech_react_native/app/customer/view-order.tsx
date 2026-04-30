@@ -59,7 +59,10 @@ interface OrderItem {
   };
   can_review: boolean;
   can_return: boolean;
+  is_refundable: boolean; // ← ADD THIS LINE
   return_deadline: string | null;
+  shipping_fee?: string;
+  distance_km?: number | null;
 }
 
 interface ShippingInfo {
@@ -1401,6 +1404,41 @@ export default function ViewTrackOrderPage() {
     // router.push(`/return/${checkoutId}?orderId=${orderId}`);
   };
 
+  // Handle individual item return/refund
+  const handleReturnItem = (checkoutId: string, productName: string) => {
+    Alert.alert(
+      "Request Return/Refund",
+      `Do you want to request a return or refund for "${productName}"?`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Continue",
+          onPress: () => {
+            router.push(
+              `/customer/request-refund?orderId=${orderId}&checkoutId=${checkoutId}`,
+            );
+          },
+        },
+      ],
+    );
+  };
+
+  // Handle individual item rating
+  const handleRateItem = (item: OrderItem) => {
+    router.push({
+      pathname: "/customer/rate",
+      params: {
+        orderId: String(orderId),
+        productId: item.product_id,
+        productName: item.product_name,
+        variantTitle: item.product_variant || "",
+        checkoutId: item.checkout_id,
+        shopId: item.shop_info?.id || "",
+        shopName: item.shop_info?.name || "",
+      },
+    });
+  };
+
   const handleContactSeller = (shopId: string) => {
     router.push(`/customer/messages?shopId=${shopId}`);
   };
@@ -2132,7 +2170,7 @@ export default function ViewTrackOrderPage() {
           </View>
         )}
 
-        {/* Product Cards grouped by shop - FIXED: Use item_status for individual item status */}
+        {/* Product Cards grouped by shop */}
         <View style={styles.shopGroupsContainer}>
           <View style={styles.infoCard}>
             <View style={styles.cardHeader}>
@@ -2238,7 +2276,8 @@ export default function ViewTrackOrderPage() {
                         >
                           Quantity: {formatNumber(item.quantity)}
                         </Text>
-                        {/* FIX: Use item_status (from checkout.status) instead of shop_status */}
+
+                        {/* Item Status */}
                         {item.item_status && (
                           <Text
                             style={[
@@ -2266,21 +2305,48 @@ export default function ViewTrackOrderPage() {
                           </Text>
                         )}
 
-                        {/* Mark as Received button - only show for delivered items */}
+                        {/* Action Buttons for delivered items */}
                         {item.item_status === "delivered" && (
-                          <TouchableOpacity
-                            style={styles.receiveItemButton}
-                            onPress={() => handleReceiveItem(item.checkout_id)}
-                          >
-                            <MaterialIcons
-                              name="check-circle"
-                              size={16}
-                              color="#FFFFFF"
-                            />
-                            <Text style={styles.receiveItemButtonText}>
-                              Mark as Received
-                            </Text>
-                          </TouchableOpacity>
+                          <View style={styles.itemActionButtonsContainer}>
+                            {/* Return/Refund Button */}
+                            {item.can_return && item.is_refundable && (
+                              <TouchableOpacity
+                                style={styles.returnItemButton}
+                                onPress={() =>
+                                  handleReturnItem(
+                                    item.checkout_id,
+                                    item.product_name,
+                                  )
+                                }
+                              >
+                                <MaterialIcons
+                                  name="receipt"
+                                  size={14}
+                                  color="#EF4444"
+                                />
+                                <Text style={styles.returnItemButtonText}>
+                                  Return/Refund
+                                </Text>
+                              </TouchableOpacity>
+                            )}
+
+                            {/* Rate Button */}
+                            {item.can_review && (
+                              <TouchableOpacity
+                                style={styles.rateItemButton}
+                                onPress={() => handleRateItem(item)}
+                              >
+                                <MaterialIcons
+                                  name="star"
+                                  size={14}
+                                  color="#F59E0B"
+                                />
+                                <Text style={styles.rateItemButtonText}>
+                                  Rate Product
+                                </Text>
+                              </TouchableOpacity>
+                            )}
+                          </View>
                         )}
                       </View>
                       <View style={styles.groupItemPriceContainer}>
@@ -2427,7 +2493,9 @@ export default function ViewTrackOrderPage() {
               </TouchableOpacity>
             )}
 
-            {orderStatusLower === "completed" &&
+            {/* Refund and Rate buttons - Show for delivered OR completed orders */}
+            {(orderStatusLower === "delivered" ||
+              orderStatusLower === "completed") &&
               (() => {
                 const refundDate = order.refund_expire_date;
                 const hasRefundDate =
@@ -2444,55 +2512,55 @@ export default function ViewTrackOrderPage() {
                 const isDisabled = isRefundExpired || isPickupMethod;
 
                 return (
-                  <TouchableOpacity
-                    style={[
-                      styles.requestRefundButton,
-                      isDisabled && styles.requestRefundButtonDisabled,
-                    ]}
-                    onPress={() => {
-                      if (isRefundExpired) {
-                        Alert.alert(
-                          "Refund Period Expired",
-                          "The refund period for this order has expired. You can no longer request a refund for this order.",
-                        );
-                      } else if (isPickupMethod) {
-                        Alert.alert(
-                          "Pickup Orders",
-                          "Refunds are not available for pickup orders. Please contact the seller directly.",
-                        );
-                      } else {
-                        router.push(
-                          `/customer/request-refund?orderId=${order.id}`,
-                        );
-                      }
-                    }}
-                    disabled={isDisabled}
-                  >
-                    <Text
+                  <>
+                    <TouchableOpacity
                       style={[
-                        styles.requestRefundButtonText,
-                        isDisabled && styles.requestRefundButtonTextDisabled,
+                        styles.requestRefundButton,
+                        isDisabled && styles.requestRefundButtonDisabled,
                       ]}
+                      onPress={() => {
+                        if (isRefundExpired) {
+                          Alert.alert(
+                            "Refund Period Expired",
+                            "The refund period for this order has expired. You can no longer request a refund for this order.",
+                          );
+                        } else if (isPickupMethod) {
+                          Alert.alert(
+                            "Pickup Orders",
+                            "Refunds are not available for pickup orders. Please contact the seller directly.",
+                          );
+                        } else {
+                          router.push(
+                            `/customer/request-refund?orderId=${order.id}`,
+                          );
+                        }
+                      }}
+                      disabled={isDisabled}
                     >
-                      Request Refund{" "}
-                      {isPickupMethod
-                        ? "(Not Available)"
-                        : isRefundExpired
-                          ? "(Expired)"
-                          : ""}
-                    </Text>
-                  </TouchableOpacity>
+                      <Text
+                        style={[
+                          styles.requestRefundButtonText,
+                          isDisabled && styles.requestRefundButtonTextDisabled,
+                        ]}
+                      >
+                        Request Refund{" "}
+                        {isPickupMethod
+                          ? "(Not Available)"
+                          : isRefundExpired
+                            ? "(Expired)"
+                            : ""}
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={styles.rateButton}
+                      onPress={() => setRateModalVisible(true)}
+                    >
+                      <Text style={styles.rateButtonText}>Rate Products</Text>
+                    </TouchableOpacity>
+                  </>
                 );
               })()}
-
-            {orderStatusLower === "completed" && items.length > 0 && (
-              <TouchableOpacity
-                style={styles.rateButton}
-                onPress={() => setRateModalVisible(true)}
-              >
-                <Text style={styles.rateButtonText}>Rate</Text>
-              </TouchableOpacity>
-            )}
           </View>
         </View>
       )}
@@ -3664,5 +3732,43 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
     fontSize: 11,
     fontWeight: "600",
+  },
+  itemActionButtonsContainer: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 8,
+  },
+  returnItemButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FEF2F2",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: "#FEE2E2",
+    gap: 4,
+  },
+  returnItemButtonText: {
+    fontSize: 11,
+    fontWeight: "500",
+    color: "#EF4444",
+  },
+  rateItemButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FFFBEB",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: "#FDE68A",
+    gap: 4,
+  },
+  rateItemButtonText: {
+    fontSize: 11,
+    fontWeight: "500",
+    color: "#D97706",
   },
 });
