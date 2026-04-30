@@ -9145,7 +9145,7 @@ class AdminRiders(viewsets.ViewSet):
                 'error': 'User not found'
             }, status=status.HTTP_404_NOT_FOUND)
 
-            
+
 class AdminVouchers(viewsets.ViewSet):
     
     @action(detail=False, methods=['post'])
@@ -31325,7 +31325,7 @@ class PurchasesBuyer(viewsets.ViewSet):
             
     # In your PurchasesBuyer viewset
 
-    @action(detail=True, methods=['post'], url_path='complete-item')
+    @action(detail=True, methods=['post'], url_path='complete-shop-item')
     def complete_item(self, request, pk=None):
         """Buyer can mark a specific item as completed/received"""
         user_id = request.headers.get('X-User-Id')
