@@ -1326,9 +1326,9 @@ export default function RequestRefundPage() {
             <Text style={styles.selectedCount}>
               {selectedItems.length} item{selectedItems.length !== 1 ? 's' : ''} selected
             </Text>
-            <Text style={styles.selectedAmount}>
+            {/* <Text style={styles.selectedAmount}>
               Order Total: {formatCurrency(order.total_amount)}
-            </Text>
+            </Text> */}
           </View>
         )}
        
