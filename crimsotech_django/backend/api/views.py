@@ -8475,22 +8475,28 @@ class AdminRiders(viewsets.ViewSet):
             return Response(response_data)
             
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             return Response({
                 'success': False,
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     def _get_analytics_data(self, start_date=None, end_date=None):
-        """Generate analytics data for charts with date range support - SIMPLIFIED VERSION"""
+        """Generate analytics data for charts with date range support"""
         # If no date range provided, use last 30 days
         if not start_date or not end_date:
             end_date = timezone.now()
             start_date = end_date - timedelta(days=30)
         
+        # Convert to date objects for easier manipulation
+        start_date_obj = start_date.date() if hasattr(start_date, 'date') else start_date
+        end_date_obj = end_date.date() if hasattr(end_date, 'date') else end_date
+        
         # Rider registrations within date range
         rider_registrations = []
-        current_date = start_date.date()
-        end_date_date = end_date.date()
+        current_date = start_date_obj
+        end_date_date = end_date_obj
         
         # Determine if we should show daily or monthly data
         days_diff = (end_date_date - current_date).days
@@ -8508,13 +8514,18 @@ class AdminRiders(viewsets.ViewSet):
                 
                 current_date += timedelta(days=1)
         else:  # For longer periods, show monthly data
-            current_month = start_date.replace(day=1)
-            while current_month <= end_date:
-                next_month = current_month + relativedelta(months=1)
+            # Use date objects for month iteration
+            current_month = start_date_obj.replace(day=1)
+            while current_month <= end_date_obj:
+                # Get next month
+                if current_month.month == 12:
+                    next_month = current_month.replace(year=current_month.year + 1, month=1)
+                else:
+                    next_month = current_month.replace(month=current_month.month + 1)
                 
                 count = Rider.objects.filter(
-                    rider__created_at__gte=current_month,
-                    rider__created_at__lt=next_month
+                    rider__created_at__date__gte=current_month,
+                    rider__created_at__date__lt=next_month
                 ).count()
                 
                 rider_registrations.append({
@@ -8556,23 +8567,29 @@ class AdminRiders(viewsets.ViewSet):
                 'value': vehicle_data['count']
             })
         
-        # Performance trends within date range (simplified - only deliveries)
+        # Performance trends within date range
         performance_trends = []
         
         # Determine time intervals based on date range
-        range_days = (end_date - start_date).days
+        range_days = (end_date - start_date).days if hasattr(end_date, 'days') else 30
         
         if range_days <= 180:  # 6 months or less
             # Show monthly trends
-            current_month = start_date.replace(day=1)
-            while current_month <= end_date:
-                next_month = current_month + relativedelta(months=1)
+            # Use date objects for month iteration
+            current_month = start_date_obj.replace(day=1)
+            while current_month <= end_date_obj:
+                # Get next month
+                if current_month.month == 12:
+                    next_month = current_month.replace(year=current_month.year + 1, month=1)
+                else:
+                    next_month = current_month.replace(month=current_month.month + 1)
+                
                 month_name = current_month.strftime('%b %Y')
                 
                 # Get deliveries in this month
                 monthly_deliveries = Delivery.objects.filter(
-                    created_at__gte=current_month,
-                    created_at__lt=next_month
+                    created_at__date__gte=current_month,
+                    created_at__date__lt=next_month
                 ).count()
                 
                 performance_trends.append({
@@ -8585,15 +8602,41 @@ class AdminRiders(viewsets.ViewSet):
                 current_month = next_month
         else:
             # For longer periods, show quarterly trends
-            current_quarter = start_date
-            while current_quarter <= end_date:
-                next_quarter = current_quarter + relativedelta(months=3)
-                quarter_name = f"Q{(current_quarter.month-1)//3 + 1} {current_quarter.year}"
+            current_year = start_date_obj.year
+            current_quarter = ((start_date_obj.month - 1) // 3) + 1
+            
+            while True:
+                # Calculate quarter start and end
+                quarter_start_month = (current_quarter - 1) * 3 + 1
+                quarter_start = datetime(current_year, quarter_start_month, 1).date()
+                
+                if quarter_start_month == 10:
+                    quarter_end = datetime(current_year, 12, 31).date()
+                elif quarter_start_month == 7:
+                    quarter_end = datetime(current_year, 9, 30).date()
+                elif quarter_start_month == 4:
+                    quarter_end = datetime(current_year, 6, 30).date()
+                else:
+                    quarter_end = datetime(current_year, 3, 31).date()
+                
+                if quarter_start > end_date_obj:
+                    break
+                
+                if quarter_end < start_date_obj:
+                    # Move to next quarter
+                    if current_quarter == 4:
+                        current_year += 1
+                        current_quarter = 1
+                    else:
+                        current_quarter += 1
+                    continue
+                
+                quarter_name = f"Q{current_quarter} {current_year}"
                 
                 # Get deliveries in this quarter
                 quarterly_deliveries = Delivery.objects.filter(
-                    created_at__gte=current_quarter,
-                    created_at__lt=next_quarter
+                    created_at__date__gte=quarter_start,
+                    created_at__date__lte=quarter_end
                 ).count()
                 
                 performance_trends.append({
@@ -8603,7 +8646,12 @@ class AdminRiders(viewsets.ViewSet):
                     'rating': 4.5   # Placeholder
                 })
                 
-                current_quarter = next_quarter
+                # Move to next quarter
+                if current_quarter == 4:
+                    current_year += 1
+                    current_quarter = 1
+                else:
+                    current_quarter += 1
         
         return {
             'rider_registrations': rider_registrations,
@@ -8856,6 +8904,8 @@ class AdminRiders(viewsets.ViewSet):
                 'error': 'Rider not found'
             }, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             return Response({
                 'success': False,
                 'error': str(e)
@@ -8894,6 +8944,8 @@ class AdminRiders(viewsets.ViewSet):
             })
             
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             return Response({
                 'success': False,
                 'error': str(e)
@@ -8959,6 +9011,8 @@ class AdminRiders(viewsets.ViewSet):
                 'error': 'Rider not found'
             }, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             return Response({
                 'success': False,
                 'error': str(e)
@@ -9044,6 +9098,8 @@ class AdminRiders(viewsets.ViewSet):
             })
             
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             return Response({
                 'success': False,
                 'error': str(e)
@@ -9089,6 +9145,7 @@ class AdminRiders(viewsets.ViewSet):
                 'error': 'User not found'
             }, status=status.HTTP_404_NOT_FOUND)
 
+            
 class AdminVouchers(viewsets.ViewSet):
     
     @action(detail=False, methods=['post'])
