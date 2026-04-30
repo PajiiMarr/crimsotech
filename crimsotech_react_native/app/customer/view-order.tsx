@@ -1682,7 +1682,7 @@ export default function ViewTrackOrderPage() {
       orderStatusLower === "delivered" ||
       orderStatusLower === "picked_up" ||
       orderStatusLower === "completed" ||
-      orderStatusLower === "partially_delivered" 
+      orderStatusLower === "partially_delivered"
     );
   };
 
@@ -2461,6 +2461,28 @@ export default function ViewTrackOrderPage() {
                         {(item.shop_status === "delivered" ||
                           item.shop_status === "completed") && (
                           <View style={styles.itemActionButtonsContainer}>
+                            {/* Mark as Received Button - For delivered items that aren't completed yet */}
+                            {item.shop_status === "delivered"  || item.item_status === "delivered" && (
+                              <TouchableOpacity
+                                style={styles.receiveItemButton}
+                                onPress={() =>
+                                  handleReceiveItem(
+                                    item.checkout_id,
+                                    item.shop_info?.id,
+                                  )
+                                }
+                              >
+                                <MaterialIcons
+                                  name="check-circle"
+                                  size={14}
+                                  color="#FFFFFF"
+                                />
+                                <Text style={styles.receiveItemButtonText}>
+                                  Mark as Received
+                                </Text>
+                              </TouchableOpacity>
+                            )}
+
                             {/* Return/Refund Button */}
                             {item.can_return && item.is_refundable && (
                               <TouchableOpacity
@@ -2618,111 +2640,113 @@ export default function ViewTrackOrderPage() {
           </View>
         </View>
       </ScrollView>
-{/* Sticky Action Buttons */}
-{hasActions() && (
-  <View style={styles.stickyFooter}>
-    <View style={styles.actionButtonsContainer}>
-      {(actions.can_cancel ||
-        (orderStatusLower === "rider_assigned" &&
-          order?.delivery_status?.toLowerCase() === "pending")) && (
-        <TouchableOpacity
-          style={styles.cancelOrderButton}
-          onPress={handleCancelOrder}
-        >
-          <Text style={styles.cancelOrderButtonText}>Cancel Order</Text>
-        </TouchableOpacity>
+      {/* Sticky Action Buttons */}
+      {hasActions() && (
+        <View style={styles.stickyFooter}>
+          <View style={styles.actionButtonsContainer}>
+            {(actions.can_cancel ||
+              (orderStatusLower === "rider_assigned" &&
+                order?.delivery_status?.toLowerCase() === "pending")) && (
+              <TouchableOpacity
+                style={styles.cancelOrderButton}
+                onPress={handleCancelOrder}
+              >
+                <Text style={styles.cancelOrderButtonText}>Cancel Order</Text>
+              </TouchableOpacity>
+            )}
+
+            {(orderStatusLower === "delivered" ||
+              orderStatusLower === "picked_up" ||
+              orderStatusLower === "partially_delivered") && (
+              <TouchableOpacity
+                style={styles.orderReceivedButton}
+                onPress={handleOrderReceived}
+              >
+                <Text style={styles.orderReceivedButtonText}>
+                  Order Received
+                </Text>
+              </TouchableOpacity>
+            )}
+
+            {/* Refund and Rate buttons - Show if order has reviewable or returnable items */}
+            {/* Show for delivered, partially_delivered, or completed */}
+            {(orderStatusLower === "delivered" ||
+              orderStatusLower === "partially_delivered" ||
+              orderStatusLower === "completed") &&
+              (actions.can_review || actions.can_return) &&
+              (() => {
+                const refundDate = order.refund_expire_date;
+                const hasRefundDate =
+                  refundDate !== null &&
+                  refundDate !== undefined &&
+                  refundDate !== "";
+                const isRefundExpired =
+                  hasRefundDate && new Date(refundDate) < new Date();
+                const isPickupMethod = String(
+                  shipping_info?.delivery_method || "",
+                )
+                  .toLowerCase()
+                  .includes("pickup");
+                const isDisabled = isRefundExpired || isPickupMethod;
+
+                return (
+                  <>
+                    {actions.can_return && (
+                      <TouchableOpacity
+                        style={[
+                          styles.requestRefundButton,
+                          isDisabled && styles.requestRefundButtonDisabled,
+                        ]}
+                        onPress={() => {
+                          if (isRefundExpired) {
+                            Alert.alert(
+                              "Refund Period Expired",
+                              "The refund period for this order has expired.",
+                            );
+                          } else if (isPickupMethod) {
+                            Alert.alert(
+                              "Pickup Orders",
+                              "Refunds are not available for pickup orders.",
+                            );
+                          } else {
+                            router.push(
+                              `/customer/request-refund?orderId=${order.id}`,
+                            );
+                          }
+                        }}
+                        disabled={isDisabled}
+                      >
+                        <Text
+                          style={[
+                            styles.requestRefundButtonText,
+                            isDisabled &&
+                              styles.requestRefundButtonTextDisabled,
+                          ]}
+                        >
+                          Request Refund{" "}
+                          {isPickupMethod
+                            ? "(Not Available)"
+                            : isRefundExpired
+                              ? "(Expired)"
+                              : ""}
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+
+                    {actions.can_review && (
+                      <TouchableOpacity
+                        style={styles.rateButton}
+                        onPress={() => setRateModalVisible(true)}
+                      >
+                        <Text style={styles.rateButtonText}>Rate Products</Text>
+                      </TouchableOpacity>
+                    )}
+                  </>
+                );
+              })()}
+          </View>
+        </View>
       )}
-
-      {(orderStatusLower === "delivered" ||
-        orderStatusLower === "picked_up" ||
-        orderStatusLower === "partially_delivered") && (
-        <TouchableOpacity
-          style={styles.orderReceivedButton}
-          onPress={handleOrderReceived}
-        >
-          <Text style={styles.orderReceivedButtonText}>Order Received</Text>
-        </TouchableOpacity>
-      )}
-
-      {/* Refund and Rate buttons - Show if order has reviewable or returnable items */}
-      {/* Show for delivered, partially_delivered, or completed */}
-      {(orderStatusLower === "delivered" || 
-        orderStatusLower === "partially_delivered" || 
-        orderStatusLower === "completed") && 
-        (actions.can_review || actions.can_return) &&
-        (() => {
-          const refundDate = order.refund_expire_date;
-          const hasRefundDate =
-            refundDate !== null &&
-            refundDate !== undefined &&
-            refundDate !== "";
-          const isRefundExpired =
-            hasRefundDate && new Date(refundDate) < new Date();
-          const isPickupMethod = String(
-            shipping_info?.delivery_method || "",
-          )
-            .toLowerCase()
-            .includes("pickup");
-          const isDisabled = isRefundExpired || isPickupMethod;
-
-          return (
-            <>
-              {actions.can_return && (
-                <TouchableOpacity
-                  style={[
-                    styles.requestRefundButton,
-                    isDisabled && styles.requestRefundButtonDisabled,
-                  ]}
-                  onPress={() => {
-                    if (isRefundExpired) {
-                      Alert.alert(
-                        "Refund Period Expired",
-                        "The refund period for this order has expired.",
-                      );
-                    } else if (isPickupMethod) {
-                      Alert.alert(
-                        "Pickup Orders",
-                        "Refunds are not available for pickup orders.",
-                      );
-                    } else {
-                      router.push(
-                        `/customer/request-refund?orderId=${order.id}`,
-                      );
-                    }
-                  }}
-                  disabled={isDisabled}
-                >
-                  <Text
-                    style={[
-                      styles.requestRefundButtonText,
-                      isDisabled &&
-                        styles.requestRefundButtonTextDisabled,
-                    ]}
-                  >
-                    Request Refund{" "}
-                    {isPickupMethod
-                      ? "(Not Available)"
-                      : isRefundExpired
-                        ? "(Expired)"
-                        : ""}
-                  </Text>
-                </TouchableOpacity>
-              )}
-
-              {actions.can_review && (
-                <TouchableOpacity
-                  style={styles.rateButton}
-                  onPress={() => setRateModalVisible(true)}
-                >
-                  <Text style={styles.rateButtonText}>Rate Products</Text>
-                </TouchableOpacity>
-              )}
-            </>
-          );
-        })()}
-    </View>
-  </View>
-)}
 
       <RateItemModal
         visible={rateModalVisible}
