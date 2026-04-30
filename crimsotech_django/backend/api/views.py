@@ -30566,6 +30566,10 @@ class PurchasesBuyer(viewsets.ViewSet):
                         except OrderShopStatus.DoesNotExist:
                             shop_status = 'pending'
                     
+                    # FIX: Include 'completed' status for can_review and can_return
+                    can_review = (item_status == 'delivered' or item_status == 'completed') and not has_reviewed
+                    can_return = (item_status == 'delivered' or item_status == 'completed') and not has_reviewed
+                    
                     item_data = {
                         'checkout_id': str(checkout.id),
                         'product_id': str(product.id),
@@ -30585,8 +30589,8 @@ class PurchasesBuyer(viewsets.ViewSet):
                         'product_images': product_images,
                         'primary_image': primary_image,
                         'shop_info': shop_info,
-                        'can_review': item_status == 'delivered' and not has_reviewed,
-                        'can_return': item_status == 'delivered' and not has_reviewed,
+                        'can_review': can_review,
+                        'can_return': can_return,
                         'is_refundable': variant_is_refundable,
                         'return_deadline': (checkout.created_at + timedelta(days=14)).isoformat() if checkout.created_at else None,
                         'shipping_fee': str(getattr(checkout, 'shipping_fee', 0.00)),
@@ -30621,6 +30625,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                         'primary_image': None,
                         'voucher_applied': None,
                         'can_review': False,
+                        'can_return': False,
                         'is_refundable': False
                     }
                     items_data.append(item_data)
@@ -30654,7 +30659,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                     'created_at': order.created_at.isoformat(),
                     'updated_at': order.updated_at.isoformat() if order.updated_at else None,
                     'completed_at': order.completed_at.isoformat() if order.completed_at else None,
-                    'refund_expire_date': order.refund_expire_date.isoformat() if order.refund_expire_date else None,   
+                        'refund_expire_date': order.refund_expire_date.isoformat() if order.refund_expire_date else None,   
                     'payment_method': order.payment_method,
                     'payment_status': payment.status if payment else None,
                     'delivery_status': delivery.status if delivery else None,
@@ -30699,7 +30704,9 @@ class PurchasesBuyer(viewsets.ViewSet):
         except Exception as exc:
             logger.exception('Unhandled exception in view_order_detail for order %s user %s: %s', pk, user_id, exc)
             return Response({'error': 'An internal error occurred while fetching the order'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    
+
+
+
     def _get_item_status(self, order, checkout):
         """Determine the correct status for an item"""
         if checkout.status == 'cancelled':
