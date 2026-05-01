@@ -306,6 +306,7 @@ const ApprovedStatus = ({ refund, onOpenTrackingDialog, formatCurrency, formatDa
   if ((payStatus === 'completed' && refund.status?.toLowerCase() === 'approved') || refund.status?.toLowerCase() === 'completed') {
     return <CompletedStatus refund={refund} formatCurrency={formatCurrency} formatDate={formatDate} />;
   }
+  
 
   return (
     <View style={styles.statusSection}>
@@ -342,6 +343,22 @@ const ApprovedStatus = ({ refund, onOpenTrackingDialog, formatCurrency, formatDa
           )}
         </View>
       </View>
+      {/* ========== ADD: Shop Information Card ========== */}
+{refund.shop_name && (
+  <View style={styles.shopInfoCard}>
+    <View style={styles.row}>
+      <Store size={20} color="#F97316" />
+      <Text style={[styles.sectionTitle, { marginLeft: 8 }]}>Store Information</Text>
+    </View>
+    <View style={styles.addressContent}>
+      <Text style={styles.addressName}>{refund.shop_name}</Text>
+      {refund.shop_address && (
+        <Text style={styles.addressText}>{refund.shop_address}</Text>
+      )}
+    </View>
+  </View>
+)}
+{/* ========== END ADD ========== */}
       
       {/* Return Address Card - Show only when not shipped yet */}
       {isReturnOrReplace && !hasShippingInfo && returnAddress && (
@@ -503,6 +520,9 @@ const ApprovedStatus = ({ refund, onOpenTrackingDialog, formatCurrency, formatDa
     </View>
   )
 )}
+{refund.delivery_info && (rrStatus === 'shipped' || rrStatus === 'pickup_accepted' || rrStatus === 'ready_for_pickup') && (
+        <RiderDetailsCard deliveryInfo={refund.delivery_info} formatCurrency={formatCurrency} />
+      )}
     </View>
   );
 };
@@ -860,6 +880,7 @@ const ProcessingStatus = ({ refund, formatCurrency }: { refund: any; formatCurre
         <View style={styles.processingDetails}>
           <Text style={styles.processingDetail}>Amount: <Text style={styles.amountText}>{formatCurrency(refund.total_refund_amount || 0)}</Text></Text>
           <Text style={styles.processingDetail}>Method: <Text style={styles.methodText}>{refund.final_refund_method || refund.buyer_preferred_refund_method}</Text></Text>
+          
         </View>
       </View>
     </View>
@@ -1307,6 +1328,51 @@ const ApprovedPickupStatus = () => (
   </View>
 );
 
+const RiderDetailsCard = ({ deliveryInfo, formatCurrency }: { deliveryInfo: any; formatCurrency: (amount: string | number) => string }) => {
+  if (!deliveryInfo) return null;
+  
+  const deliveryFee = deliveryInfo.delivery_fee || 0;
+  
+  return (
+    <View style={styles.riderCard}>
+      <View style={styles.riderCardHeader}>
+        <Ionicons name="bicycle-outline" size={18} color="#3B82F6" />
+        <Text style={styles.riderCardTitle}>Rider Details</Text>
+      </View>
+      <View style={styles.riderCardContent}>
+        <View style={styles.riderInfoRow}>
+          <Ionicons name="person-outline" size={14} color="#6B7280" />
+          <Text style={styles.riderInfoText}>Name: {deliveryInfo.rider_name || 'N/A'}</Text>
+        </View>
+        <View style={styles.riderInfoRow}>
+          <Ionicons name="call-outline" size={14} color="#6B7280" />
+          <Text style={styles.riderInfoText}>Contact: {deliveryInfo.rider_phone || 'N/A'}</Text>
+        </View>
+        <View style={styles.riderInfoRow}>
+          <MaterialCommunityIcons name="map-marker-distance" size={14} color="#6B7280" />
+          <Text style={styles.riderInfoText}>Distance: {deliveryInfo.distance_km ? `${deliveryInfo.distance_km} km` : 'N/A'}</Text>
+        </View>
+        <View style={styles.riderInfoRow}>
+          <MaterialIcons name="access-time" size={14} color="#6B7280" />
+          <Text style={styles.riderInfoText}>Est. Time: {deliveryInfo.estimated_minutes ? `~${deliveryInfo.estimated_minutes} mins` : 'N/A'}</Text>
+        </View>
+        
+        {/* Payment Notice */}
+        {deliveryFee > 0 && (
+          <View style={styles.paymentNoticeContainer}>
+            <MaterialIcons name="payments" size={16} color="#F59E0B" />
+            <Text style={styles.paymentNoticeText}>
+              Please pay <Text style={styles.paymentNoticeAmount}>{formatCurrency(deliveryFee)}</Text> to rider when pickup
+            </Text>
+          </View>
+        )}
+      </View>
+    </View>
+  );
+};
+
+
+
 
 // ========== ACTION BUTTONS COMPONENTS ==========
 const PendingActions = ({ onCancel, loading }: { onCancel: () => void; loading: boolean }) => (
@@ -1649,6 +1715,31 @@ const handleCancelRiderAssignment = async () => {
           headers: { 'X-User-Id': user.id }
         });
         if (detailResp?.data) {
+          const refundData = detailResp.data;
+        
+        // Try to get shop info from various possible locations
+        let shopId = refundData.shop_id || refundData.shop?.id || null;
+        let shopName = refundData.shop_name || refundData.shop?.name || null;
+        let shopAddress = null;
+        
+        // If we have shop_id but no shop_name, try to fetch it
+        if (shopId && !shopName) {
+          try {
+            const shopResp = await AxiosInstance.get(`/shops/${shopId}/`, {
+              headers: { 'X-User-Id': user.id }
+            });
+            if (shopResp.data) {
+              shopName = shopResp.data.name;
+              shopAddress = `${shopResp.data.street || ''} ${shopResp.data.barangay || ''} ${shopResp.data.city || ''} ${shopResp.data.province || ''}`.trim();
+            }
+          } catch (shopErr) {
+            console.warn('Could not fetch shop details:', shopErr);
+          }
+        }
+        
+        // Enhance refund data with shop info
+        refundData.shop_name = shopName;
+        refundData.shop_address = shopAddress;
           setRefund(detailResp.data);
           return;
         }
@@ -2087,9 +2178,25 @@ const handleSubmitTrackingForm = async () => {
   const buildRefundItems = () => {
     const orderItems = refund.order_items || [];
     const refundItems = refund.items || [];
+    const refundShopId = refund.shop_id || refund.shop?.id || null;
+    
+    // FIRST: Build the refund map
     const refundMap = new Map();
-    refundItems.forEach((ri: any) => refundMap.set(ri.checkout_id, ri));
-    return orderItems.map((oi: any) => {
+    refundItems.forEach((ri: any) => {
+      refundMap.set(ri.checkout_id, ri);
+    });
+    
+    // SECOND: Filter order items by shop if needed
+    let filteredOrderItems = orderItems;
+    if (refundShopId) {
+      filteredOrderItems = orderItems.filter((oi: any) => {
+        const itemShopId = oi.shop_id || oi.shop_info?.id;
+        return String(itemShopId) === String(refundShopId);
+      });
+    }
+    
+    // THIRD: Map filtered items with refund data
+    return filteredOrderItems.map((oi: any) => {
       const ri = refundMap.get(oi.checkout_id);
       return {
         ...oi,
@@ -2539,8 +2646,13 @@ if (rrStatus === 'pickup_accepted') {
         {/* Items with refund quantities */}
         <View style={styles.section}>
         <Text style={styles.sectionTitle}>
-  {refund.refund_type === 'replace' ? 'Items for Replacement' : 'Items to Refund'}
-</Text>
+    {refund.refund_type === 'replace' ? 'Items for Replacement' : 'Items to Refund'}
+    {refund.shop_name && (
+      <Text style={{ fontSize: 12, color: '#6B7280', fontWeight: 'normal' }}>
+        {' '}· {refund.shop_name}
+      </Text>
+    )}
+  </Text>
           {refundItemsWithDetails.map((item: any, idx: number) => {
             const variantName = item.product_variant || item.variant_title;
             return (
@@ -3344,6 +3456,67 @@ riderModalItem: {
   borderBottomWidth: 0.5,
   borderBottomColor: '#F3F4F6',
 },
+// ========== ADD RIDER CARD STYLES ==========
+riderCard: {
+  marginTop: 12,
+  backgroundColor: '#F0F9FF',
+  borderRadius: 12,
+  borderWidth: 1,
+  borderColor: '#DBEAFE',
+  overflow: 'hidden',
+},
+riderCardHeader: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  padding: 12,
+  backgroundColor: '#EFF6FF',
+  borderBottomWidth: 1,
+  borderBottomColor: '#DBEAFE',
+  gap: 8,
+},
+riderCardTitle: {
+  fontSize: 14,
+  fontWeight: '600',
+  color: '#1E40AF',
+  flex: 1,
+},
+riderCardContent: {
+  padding: 12,
+  gap: 8,
+},
+riderInfoRow: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  gap: 8,
+},
+riderInfoText: {
+  fontSize: 13,
+  color: '#1F2937',
+  flex: 1,
+},
+paymentNoticeContainer: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  backgroundColor: '#FFFBEB',
+  paddingHorizontal: 12,
+  paddingVertical: 10,
+  borderRadius: 8,
+  marginTop: 8,
+  gap: 8,
+  borderWidth: 1,
+  borderColor: '#FDE68A',
+},
+paymentNoticeText: {
+  fontSize: 12,
+  color: '#92400E',
+  flex: 1,
+  lineHeight: 16,
+},
+paymentNoticeAmount: {
+  fontWeight: '700',
+  color: '#EA580C',
+},
+// ========== END RIDER CARD STYLES ==========
 riderModalRank: {
   width: 32,
   height: 32,
@@ -3466,5 +3639,12 @@ replacementPrice: {
   fontSize: 14,
   fontWeight: '600',
   color: '#3B82F6',
+},
+shopInfoCard: {
+  backgroundColor: '#FFF',
+  padding: 16,
+  marginBottom: 8,
+  borderLeftWidth: 4,
+  borderLeftColor: '#F97316',
 },
 });

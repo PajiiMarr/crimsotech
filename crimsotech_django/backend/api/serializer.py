@@ -1362,7 +1362,10 @@ class RefundSerializer(serializers.ModelSerializer):
         return [{
             'checkout_id': str(item.checkout.id),
             'quantity': item.quantity,
-            'amount': str(item.amount) if item.amount else None
+            'amount': str(item.amount) if item.amount else None,
+            'shop_id': str(item.checkout.cart_item.product.shop.id),  
+            'shop_name': item.checkout.cart_item.product.shop.name,
+            'shipping_fee': str(item.checkout.shipping_fee) if item.checkout.shipping_fee else '0', 
         } for item in obj.items.all()]
 
     class Meta:
