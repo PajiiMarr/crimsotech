@@ -25428,7 +25428,6 @@ class SellerOrderList(viewsets.ViewSet):
         except Exception as e:
             return Response({"success": False, "message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-
     @action(detail=False, methods=['post'])
     def assign_deliveries(self, request):
         try:
@@ -25474,50 +25473,47 @@ class SellerOrderList(viewsets.ViewSet):
             if active_delivery:
                 return Response({"success": False, "message": "This shop already has an active delivery in progress"}, status=status.HTTP_400_BAD_REQUEST)
             
-            # ========== FORCE USE SHIPPING FEE FROM order.shipping_fees_breakdown ==========
+            # ========== GET SHIPPING FEE FROM order.shipping_fees_breakdown ==========
             actual_delivery_fee = None
             fee_source = None
             
-            # ONLY use shipping_fees_breakdown - NO calculation fallback
+            # Debug: Print available breakdown
+            print(f"🔍 ORDER {order.order} - shipping_fees_breakdown: {order.shipping_fees_breakdown}")
+            print(f"🔍 Looking for shop_id: {shop_id_str}")
+            
+            # Method 1: Get from order.shipping_fees_breakdown (primary source)
             if hasattr(order, 'shipping_fees_breakdown') and order.shipping_fees_breakdown:
+                # Try both string and UUID format
                 shop_shipping_fee = order.shipping_fees_breakdown.get(shop_id_str)
+                
+                # If not found, try with the shop's UUID object as key
+                if shop_shipping_fee is None and shop:
+                    shop_shipping_fee = order.shipping_fees_breakdown.get(shop.id)
+                
                 if shop_shipping_fee is not None:
                     try:
                         actual_delivery_fee = Decimal(str(shop_shipping_fee))
                         fee_source = "order.shipping_fees_breakdown"
-                        print(f"✅ FORCED using shipping fee from order.shipping_fees_breakdown: ₱{actual_delivery_fee} for shop {shop.name} (ID: {shop_id_str})")
-                        print(f"📦 Full shipping_fees_breakdown: {order.shipping_fees_breakdown}")
+                        print(f"✅ Using shipping fee from order.shipping_fees_breakdown: ₱{actual_delivery_fee}")
                     except (ValueError, TypeError) as e:
                         print(f"⚠️ Error converting shipping fee: {e}")
-                        return Response({
-                            "success": False, 
-                            "message": f"Invalid shipping fee value in order metadata: {shop_shipping_fee}"
-                        }, status=status.HTTP_400_BAD_REQUEST)
             
-            # If no shipping fee found, return error (don't calculate from distance)
+            # Method 2: Fallback to checkout.shipping_fee
             if actual_delivery_fee is None:
-                print(f"❌ No shipping fee found in order.shipping_fees_breakdown for shop {shop_id_str}")
-                print(f"📦 Available breakdown: {order.shipping_fees_breakdown}")
-                return Response({
-                    "success": False, 
-                    "message": f"No shipping fee found for this shop in the order. Please ensure shipping fee is set before arranging shipment.",
-                    "debug": {
-                        "shop_id": shop_id_str,
-                        "shipping_fees_breakdown": order.shipping_fees_breakdown,
-                        "order_id": str(order.order)
-                    }
-                }, status=status.HTTP_400_BAD_REQUEST)
+                shop_checkouts = Checkout.objects.filter(
+                    Q(order=order, cart_item__product__shop=shop) |
+                    Q(order=order, direct_shop_id=shop_id_str)
+                )
+                for checkout in shop_checkouts:
+                    if hasattr(checkout, 'shipping_fee') and checkout.shipping_fee and checkout.shipping_fee > 0:
+                        actual_delivery_fee = Decimal(str(checkout.shipping_fee))
+                        fee_source = "checkout.shipping_fee"
+                        print(f"✅ Using shipping fee from checkout: ₱{actual_delivery_fee}")
+                        break
             
-            # Also update checkout shipping_fee to match
-            shop_checkouts = Checkout.objects.filter(
-                Q(order=order, cart_item__product__shop=shop) |
-                Q(order=order, direct_shop_id=shop_id_str)
-            )
-            for checkout in shop_checkouts:
-                if checkout.shipping_fee != float(actual_delivery_fee):
-                    checkout.shipping_fee = float(actual_delivery_fee)
-                    checkout.save(update_fields=['shipping_fee'])
-                    print(f"✅ Updated checkout {checkout.id} shipping_fee to ₱{actual_delivery_fee}")
+            # Method 3: Calculate from distance (last resort)
+            if actual_delivery_fee is None:
+                print(f"⚠️ No shipping fee found in breakdown or checkout, will calculate from distance")
             
             # Get available riders
             available_riders = Rider.objects.filter(
@@ -25576,6 +25572,13 @@ class SellerOrderList(viewsets.ViewSet):
                 total_distance = distance_to_pickup + distance_pickup_to_dest
                 estimated_minutes = self._calculate_estimated_time(total_distance)
                 
+                # Determine delivery fee for this rider
+                if actual_delivery_fee is not None:
+                    delivery_fee = actual_delivery_fee
+                else:
+                    delivery_fee = Decimal(str(self._calculate_delivery_fee(total_distance)))
+                    estimated_minutes = self._calculate_estimated_time(total_distance)
+                
                 rider_distances.append({
                     'rider': rider,
                     'total_distance': total_distance,
@@ -25583,7 +25586,7 @@ class SellerOrderList(viewsets.ViewSet):
                     'distance_pickup_to_dest': distance_pickup_to_dest,
                     'rider_lat': rider_lat,
                     'rider_lng': rider_lng,
-                    'delivery_fee': actual_delivery_fee,  # Use the forced fee
+                    'delivery_fee': delivery_fee,
                     'estimated_minutes': estimated_minutes
                 })
                 
@@ -25596,7 +25599,7 @@ class SellerOrderList(viewsets.ViewSet):
                     'distance_to_pickup_km': round(distance_to_pickup, 2),
                     'distance_pickup_to_dest_km': round(distance_pickup_to_dest, 2),
                     'total_distance_km': round(total_distance, 2),
-                    'delivery_fee': float(actual_delivery_fee),
+                    'delivery_fee': float(delivery_fee),
                     'estimated_minutes': estimated_minutes
                 })
             
@@ -25623,7 +25626,7 @@ class SellerOrderList(viewsets.ViewSet):
             total_distance = nearest['total_distance']
             distance_to_pickup = nearest['distance_to_pickup']
             distance_pickup_to_dest = nearest['distance_pickup_to_dest']
-            delivery_fee = actual_delivery_fee
+            delivery_fee = nearest['delivery_fee']
             estimated_minutes = nearest['estimated_minutes']
             
             existing_delivery = Delivery.objects.filter(order=order, shop=shop).first()
@@ -25641,7 +25644,7 @@ class SellerOrderList(viewsets.ViewSet):
                     'destination_location': {'lat': dest_lat, 'lng': dest_lng},
                     'all_riders_compared': rider_comparison,
                     'shop_id': shop_id_str,
-                    'fee_source': fee_source,
+                    'fee_source': fee_source or 'calculated_from_distance',
                     'nearest_rider': {
                         'name': f"{selected_rider.rider.first_name} {selected_rider.rider.last_name}".strip() or selected_rider.rider.username,
                         'username': selected_rider.rider.username,
@@ -25668,7 +25671,7 @@ class SellerOrderList(viewsets.ViewSet):
                         'destination_location': {'lat': dest_lat, 'lng': dest_lng},
                         'all_riders_compared': rider_comparison,
                         'shop_id': shop_id_str,
-                        'fee_source': fee_source,
+                        'fee_source': fee_source or 'calculated_from_distance',
                         'nearest_rider': {
                             'name': f"{selected_rider.rider.first_name} {selected_rider.rider.last_name}".strip() or selected_rider.rider.username,
                             'username': selected_rider.rider.username,
@@ -25678,6 +25681,17 @@ class SellerOrderList(viewsets.ViewSet):
                         }
                     }
                 )
+            
+            # Update checkout's shipping_fee to match
+            shop_checkouts = Checkout.objects.filter(
+                Q(order=order, cart_item__product__shop=shop) |
+                Q(order=order, direct_shop_id=shop_id_str)
+            )
+            for checkout in shop_checkouts:
+                if checkout.shipping_fee != float(delivery_fee):
+                    checkout.shipping_fee = float(delivery_fee)
+                    checkout.save(update_fields=['shipping_fee'])
+                    print(f"✅ Updated checkout {checkout.id} shipping_fee to ₱{delivery_fee}")
             
             Notification.objects.create(
                 user=selected_rider.rider,
@@ -25699,25 +25713,27 @@ class SellerOrderList(viewsets.ViewSet):
                 "data": {
                     "order_id": str(order.order),
                     "delivery_id": str(delivery.id),
-                    "rider_count": 1,
-                    "pickup_location": pickup_name,
+                    "shop_id": shop_id_str,
+                    "shop_name": shop.name,
                     "delivery_fee": float(delivery_fee),
-                    "fee_source": fee_source,
+                    "fee_source": fee_source or 'calculated_from_distance',
+                    "shipping_fees_breakdown": order.shipping_fees_breakdown,
                     "nearest_rider": {
                         "name": nearest_rider_name,
                         "username": selected_rider.rider.username,
+                        "vehicle_type": selected_rider.vehicle_type,
+                        "plate_number": selected_rider.plate_number,
                         "total_distance_km": round(total_distance, 2),
                         "delivery_fee": float(delivery_fee),
                         "estimated_minutes": estimated_minutes
                     },
-                    "all_riders_compared": rider_comparison,
-                    "shipping_fees_breakdown": order.shipping_fees_breakdown
+                    "all_riders_compared": rider_comparison
                 }
             }, status=status.HTTP_200_OK)
         except Exception as e:
             import traceback
             traceback.print_exc()
-            return Response({"success": False, "message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response({"success": False, "message": str(e), "traceback": traceback.format_exc()}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
     @action(detail=False, methods=['post'])
