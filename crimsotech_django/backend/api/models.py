@@ -1708,6 +1708,7 @@ class Refund(models.Model):
     ]
 
     refund_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    shop = models.ForeignKey('Shop', on_delete=models.CASCADE, null=True, blank=True) 
     reason = models.CharField(max_length=500)
     detailed_reason = models.TextField(blank=True, null=True)
     buyer_preferred_refund_method = models.CharField(max_length=50, choices=REFUND_METHOD_CHOICES)
