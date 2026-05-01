@@ -26,7 +26,8 @@ const { width } = Dimensions.get('window');
 interface OrderItem {
   checkout_id: string;
   product_name: string;
-  shop_name: string;
+  shop_id: string | null;
+  shop_name: string | null;
   quantity: number;
   price: string;
   subtotal: string;
@@ -120,7 +121,8 @@ export default function ReturnRefund() {
   const [successMessage, setSuccessMessage] = useState<string>('');
   const [refreshing, setRefreshing] = useState(false);
   const [cancellingRefund, setCancellingRefund] = useState<string | null>(null);
-
+  const [selectedShopId, setSelectedShopId] = useState<string | null>(null);
+  const [availableShops, setAvailableShops] = useState<Array<{id: string; name: string}>>([]);
   const getRefundsForTab = (tabId: string): RefundItem[] => {
     if (!refundData) return [];
     const refunds = Array.isArray(refundData) ? refundData : [];
@@ -201,6 +203,21 @@ export default function ReturnRefund() {
         return refunds;
     }
   };
+
+  useEffect(() => {
+    if (refundData) {
+      const shops = new Map<string, string>();
+      refundData.forEach(refund => {
+        const items = getOrderItems(refund);
+        items.forEach(item => {
+          if (item.shop_id && item.shop_name) {
+            shops.set(item.shop_id, item.shop_name);
+          }
+        });
+      });
+      setAvailableShops(Array.from(shops.entries()).map(([id, name]) => ({ id, name })));
+    }
+  }, [refundData]);
 
   useEffect(() => {
     fetchRefundData();
@@ -472,6 +489,37 @@ export default function ReturnRefund() {
             </ScrollView>
           </View>
 
+          {/* ========== ADD SHOP FILTER DROPDOWN ========== */}
+{availableShops.length > 1 && (
+  <ScrollView 
+    horizontal 
+    showsHorizontalScrollIndicator={false}
+    style={styles.shopFilterContainer}
+    contentContainerStyle={styles.shopFilterContent}
+  >
+    <TouchableOpacity
+      style={[styles.shopFilterChip, !selectedShopId && styles.shopFilterChipActive]}
+      onPress={() => setSelectedShopId(null)}
+    >
+      <Text style={[styles.shopFilterText, !selectedShopId && styles.shopFilterTextActive]}>
+        All Shops
+      </Text>
+    </TouchableOpacity>
+    {availableShops.map(shop => (
+      <TouchableOpacity
+        key={shop.id}
+        style={[styles.shopFilterChip, selectedShopId === shop.id && styles.shopFilterChipActive]}
+        onPress={() => setSelectedShopId(selectedShopId === shop.id ? null : shop.id)}
+      >
+        <MaterialIcons name="storefront" size={14} color={selectedShopId === shop.id ? '#F97316' : '#6B7280'} />
+        <Text style={[styles.shopFilterText, selectedShopId === shop.id && styles.shopFilterTextActive]}>
+          {shop.name}
+        </Text>
+      </TouchableOpacity>
+    ))}
+  </ScrollView>
+)}
+{/* ========== END ADD ========== */}
           {/* Success Message */}
           {successMessage !== '' && (
             <View style={styles.successAlert}>
@@ -551,6 +599,12 @@ export default function ReturnRefund() {
                                 <Text style={styles.productName} numberOfLines={1}>
                                   {productName}
                                 </Text>
+                                {firstItem.shop_name && (
+                                  <Text style={styles.shopName} numberOfLines={1}>
+                                    <MaterialIcons name="storefront" size={10} color="#6B7280" />
+                                    {' '}{firstItem.shop_name}
+                                  </Text>
+                                )}
                                 <Text style={styles.productMeta}>{productMeta}</Text>
                               </View>
                             </View>
@@ -571,6 +625,11 @@ export default function ReturnRefund() {
                                 )}
                               </View>
                               <Text style={styles.productCount}>{productCount} products</Text>
+                              {firstItem.shop_name && (
+                                  <Text style={styles.shopNameSmall}>
+                                    from {firstItem.shop_name}
+                                  </Text>
+                                )}
                             </View>
                           )
                         ) : (
@@ -589,6 +648,12 @@ export default function ReturnRefund() {
                         <View style={styles.expandedSection}>
                           <Text style={styles.expandedTitle}>Refund Details</Text>
                           <View style={styles.detailsGrid}>
+                          {firstItem && firstItem.shop_name && (
+                            <View style={styles.shopDetailRow}>
+                              <MaterialIcons name="storefront" size={14} color="#6B7280" />
+                              <Text style={styles.detailItem}>Shop: {firstItem.shop_name}</Text>
+                            </View>
+                          )}
                             <Text style={styles.detailItem}>Type: {refund.refund_type === 'return' ? 'Return Item' : refund.refund_type === 'replace' ? 'Replacement' : 'Keep Item'}</Text>
                             <Text style={styles.detailItem}>Method: {refund.buyer_preferred_refund_method || 'N/A'}</Text>
                             <Text style={styles.detailItem}>Payment Status: {refund.refund_payment_status}</Text>
@@ -996,5 +1061,56 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '500',
     color: '#EF4444',
+  },
+  shopName: {
+    fontSize: 10,
+    color: '#6B7280',
+    marginBottom: 2,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  shopNameSmall: {
+    fontSize: 10,
+    color: '#9CA3AF',
+    marginTop: 2,
+  },
+  shopDetailRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 4,
+  },
+  shopFilterContainer: {
+    backgroundColor: '#FFFFFF',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  shopFilterContent: {
+    paddingHorizontal: 16,
+    gap: 8,
+  },
+  shopFilterChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    backgroundColor: '#F3F4F6',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  shopFilterChipActive: {
+    backgroundColor: '#FFF7ED',
+    borderColor: '#F97316',
+  },
+  shopFilterText: {
+    fontSize: 12,
+    color: '#6B7280',
+  },
+  shopFilterTextActive: {
+    color: '#F97316',
+    fontWeight: '500',
   },
 });

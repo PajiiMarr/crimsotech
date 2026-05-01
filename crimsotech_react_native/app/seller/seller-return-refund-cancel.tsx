@@ -23,6 +23,12 @@ interface ReturnItem {
   id: string;
   order_id: string;
   request_number?: string;
+  shop_id?: string;     
+  shop_name?: string;  
+  shop?: {              // ← ADD THIS
+    id: string;
+    name: string;
+  }; 
   product: {
     id: string;
     name: string;
@@ -216,15 +222,27 @@ export default function Refunds() {
     filterRefunds();
   }, [searchQuery, activeTab, refundData]);
 
+  // app/seller/refunds.tsx - Add these debuggers at the beginning of fetchRefundData
+
   const fetchRefundData = async () => {
     if (!userId || !shopId) {
+      console.log('❌ Missing userId or shopId:', { userId, shopId });
       setLoading(false);
       return;
     }
-
+  
     setLoading(true);
     try {
-      console.log('Fetching refund data for seller:', { userId, shopId });
+      // ========== DEBUG: Log what we're sending ==========
+      console.log('\n🔍 ===== SELLER REFUND DEBUG =====');
+      console.log('📤 SENDING REQUEST:');
+      console.log('   URL: /return-refund/get_shop_refunds/');
+      console.log('   Headers:', {
+        'X-User-Id': userId,
+        'X-Shop-Id': shopId,
+      });
+      console.log('   Params:', { shop_id: shopId });
+      console.log('   Current user shop (from URL param):', shopId);
       
       const response = await AxiosInstance.get('/return-refund/get_shop_refunds/', {
         headers: {
@@ -234,75 +252,182 @@ export default function Refunds() {
         },
         params: { shop_id: shopId }
       });
-
-      console.log('Refund API Response:', response.data);
-
+  
+      // ========== DEBUG: Log what we received ==========
+      console.log('\n📥 RESPONSE RECEIVED:');
+      console.log('   Status:', response.status);
+      console.log('   Response structure:', Object.keys(response.data || {}));
+      
       let serverList = [];
       
       if (response.data && response.data.results) {
         serverList = response.data.results;
+        console.log(`\n📋 Total refunds from API: ${serverList.length}`);
+        console.log('   Response type: results array');
       } else if (Array.isArray(response.data)) {
         serverList = response.data;
+        console.log(`\n📋 Total refunds from API: ${serverList.length}`);
+        console.log('   Response type: direct array');
       } else {
         serverList = [];
+        console.log('   Response type: unknown/empty');
       }
-
-      const returnItems: ReturnItem[] = serverList.map((r: any) => ({
-        id: r.refund_id || r.refund || r.id,
-        order_id: r.order_id || r.order_info?.order_id || r.order?.order || '',
-        buyer_notified_at: r.buyer_notified_at || null,
-        product: {
-          id: r.order_items?.[0]?.product_id || r.order_items?.[0]?.product?.id || 'unknown',
-          name: r.order_items?.[0]?.product_name || r.order_items?.[0]?.product?.name || r.order_items?.[0]?.name || 'Product',
-          price: Number(r.order_items?.[0]?.price) || Number(r.amount) || 0,
-          shop: r.shop || r.order_items?.[0]?.shop || { id: shopId, name: '' },
-          image: r.order_items?.[0]?.product_image || ''
-        },
-        quantity: r.order_items?.[0]?.quantity || 1,
-        amount: Number(r.order_items?.[0]?.refund_amount) || Number(r.amount) || 0,
-        type: r.refund_type === 'return' ? 'return' : 'refund',
-        refund_type: r.refund_type || 'keep',
-        status: r.status || 'pending',
-        reason: r.reason || '',
-        description: r.customer_note || r.detailed_reason || '',
-        created_at: r.requested_at || '',
-        updated_at: r.updated_at || r.requested_at || '',
-        refund_amount: r.amount ? Number(r.amount) : undefined,
-        refund_method: r.final_refund_method || r.buyer_preferred_refund_method || undefined,
-        refund_payment_status: r.refund_payment_status || 'pending',
-        tracking_number: r.return_request?.tracking_number || undefined,
-        dispute_reason: r.dispute?.reason || undefined,
-        resolution: r.dispute?.resolution || undefined,
-        reviewed_by: r.processed_by?.username || undefined,
-        reviewed_at: r.processed_at || undefined,
-        courier: r.return_request?.logistic_service || undefined,
-        notes: r.customer_note || r.notes || '',
-        order_items: r.order_items || [],
-        return_request: r.return_request ? {
-          status: r.return_request.status,
-          tracking_number: r.return_request.tracking_number,
-          shipped_at: r.return_request.shipped_at,
-          received_at: r.return_request.received_at,
-          notes: r.return_request.notes
-        } : undefined,
-        dispute: r.dispute ? {
-          status: r.dispute.status,
-          reason: r.dispute.reason,
-          resolution: r.dispute.resolution
-        } : undefined,
-        available_actions: (function(status){
-          switch(status){
-            case 'pending': return ['approve','reject','propose_negotiation'];
-            case 'negotiation': return ['propose_negotiation','contact_customer'];
-            case 'approved': return ['schedule_pickup','process_refund'];
-            case 'dispute': return ['contact_customer','resolve_dispute'];
-            default: return [];
-          }
-        })(r.status)
-      }));
-
+  
+      // ========== CRITICAL DEBUG: Log each refund's shop info ==========
+      console.log('\n🏪 === REFUNDS RETURNED BY API ===');
+      serverList.forEach((refund: any, idx: number) => {
+        console.log(`\nRefund ${idx + 1}:`);
+        console.log(`   ID: ${refund.refund_id || refund.id}`);
+        console.log(`   Status: ${refund.status}`);
+        console.log(`   Refund Type: ${refund.refund_type}`);
+        console.log(`   refund.shop_id: ${refund.shop_id}`);
+        console.log(`   refund.shop?.id: ${refund.shop?.id}`);
+        console.log(`   refund.shop_name: ${refund.shop_name}`);
+        console.log(`   refund.shop?.name: ${refund.shop?.name}`);
+        
+        if (refund.order_items && refund.order_items.length > 0) {
+          console.log(`   Items (${refund.order_items.length}):`);
+          refund.order_items.forEach((item: any, itemIdx: number) => {
+            console.log(`      ${itemIdx + 1}. ${item.product_name}`);
+            console.log(`         item.shop_id: ${item.shop_id}`);
+            console.log(`         item.shop?.id: ${item.shop?.id}`);
+            console.log(`         item.shop_name: ${item.shop_name}`);
+          });
+        }
+      });
+  
+      // ========== CHECK: Is the API returning refunds for the wrong shop? ==========
+      const expectedShopId = shopId;
+      const wrongShopRefunds = serverList.filter((refund: any) => {
+        const refundShopId = refund.shop_id || refund.shop?.id;
+        return refundShopId && String(refundShopId) !== String(expectedShopId);
+      });
+      
+      if (wrongShopRefunds.length > 0) {
+        console.log('\n⚠️⚠️⚠️ PROBLEM DETECTED ⚠️⚠️⚠️');
+        console.log(`Expected shop ID: ${expectedShopId}`);
+        console.log(`Found ${wrongShopRefunds.length} refund(s) for OTHER shops:`);
+        wrongShopRefunds.forEach((refund: any) => {
+          console.log(`   - Refund ${refund.refund_id}: belongs to shop ${refund.shop_id || refund.shop?.id}`);
+        });
+        console.log('\n🔧 THIS IS A BACKEND ISSUE!');
+        console.log('   The API is returning refunds that do not belong to the requesting shop.');
+        console.log('   Check that the backend is properly filtering by X-Shop-Id header.');
+      } else {
+        console.log('\n✅ Backend filtering is correct - all refunds belong to the expected shop');
+      }
+      
+      // ========== FIXED: Properly map each refund with correct shop name extraction ==========
+      const returnItems: ReturnItem[] = serverList.map((r: any) => {
+        // Extract shop info - prioritize shop object, then shop_id/shop_name
+        const refundShopId = r.shop?.id || r.shop_id || shopId;
+        const refundShopName = r.shop?.name || r.shop_name || '';
+        
+        console.log(`\n🟢 === PROCESSING REFUND ===`);
+        console.log(`Refund ID: ${r.refund_id || r.id}`);
+        console.log(`Target Shop ID: ${refundShopId}`);
+        console.log(`Target Shop Name: ${refundShopName}`);
+        
+        // Filter order_items to ONLY items from this shop
+        const filteredOrderItems = (r.order_items || []).filter((item: any) => {
+          const itemShopId = item.shop?.id || item.shop_id || item.shop_info?.id;
+          const itemShopName = item.shop?.name || item.shop_name || item.shop_info?.name;
+          const isMatch = String(itemShopId) === String(refundShopId);
+          
+          console.log(`   🔎 Filtering item: ${item.product_name}`);
+          console.log(`      itemShopId: ${itemShopId}`);
+          console.log(`      itemShopName: ${itemShopName}`);
+          console.log(`      MATCH: ${isMatch ? '✅ KEEP' : '❌ REMOVE'}`);
+          
+          return isMatch;
+        });
+        
+        console.log(`   📊 Filter result: ${r.order_items?.length || 0} total → ${filteredOrderItems.length} kept`);
+        
+        // Log removed items
+        const removedItems = (r.order_items || []).filter((item: any) => {
+          const itemShopId = item.shop?.id || item.shop_id || item.shop_info?.id;
+          return String(itemShopId) !== String(refundShopId);
+        });
+        if (removedItems.length > 0) {
+          console.log(`   ❌ REMOVED ${removedItems.length} item(s) from other shops`);
+        }
+        
+        const finalOrderItems = filteredOrderItems.length > 0 ? filteredOrderItems : r.order_items || [];
+        const primaryItem = finalOrderItems[0];
+        
+        return {
+          id: r.refund_id || r.refund || r.id,
+          order_id: r.order_id || r.order_info?.order_id || r.order?.order || '',
+          buyer_notified_at: r.buyer_notified_at || null,
+          shop_id: refundShopId,
+          shop_name: refundShopName,
+          shop: { id: refundShopId, name: refundShopName }, // Add shop object for display
+          product: {
+            id: primaryItem?.product_id || primaryItem?.product?.id || 'unknown',
+            name: primaryItem?.product_name || primaryItem?.product?.name || primaryItem?.name || 'Product',
+            price: Number(primaryItem?.price) || Number(r.amount) || 0,
+            shop: { id: refundShopId, name: refundShopName },
+            image: primaryItem?.product_image || ''
+          },
+          quantity: primaryItem?.quantity || 1,
+          amount: Number(primaryItem?.refund_amount) || Number(r.amount) || 0,
+          type: r.refund_type === 'return' ? 'return' : 'refund',
+          refund_type: r.refund_type || 'keep',
+          status: r.status || 'pending',
+          reason: r.reason || '',
+          description: r.customer_note || r.detailed_reason || '',
+          created_at: r.requested_at || '',
+          updated_at: r.updated_at || r.requested_at || '',
+          refund_amount: r.amount ? Number(r.amount) : undefined,
+          refund_method: r.final_refund_method || r.buyer_preferred_refund_method || undefined,
+          refund_payment_status: r.refund_payment_status || 'pending',
+          tracking_number: r.return_request?.tracking_number || undefined,
+          dispute_reason: r.dispute?.reason || undefined,
+          resolution: r.dispute?.resolution || undefined,
+          reviewed_by: r.processed_by?.username || undefined,
+          reviewed_at: r.processed_at || undefined,
+          courier: r.return_request?.logistic_service || undefined,
+          notes: r.customer_note || r.notes || '',
+          order_items: filteredOrderItems,
+          return_request: r.return_request ? {
+            status: r.return_request.status,
+            tracking_number: r.return_request.tracking_number,
+            shipped_at: r.return_request.shipped_at,
+            received_at: r.return_request.received_at,
+            notes: r.return_request.notes
+          } : undefined,
+          dispute: r.dispute ? {
+            status: r.dispute.status,
+            reason: r.dispute.reason,
+            resolution: r.dispute.resolution
+          } : undefined,
+          available_actions: (function(status){
+            switch(status){
+              case 'pending': return ['approve','reject','propose_negotiation'];
+              case 'negotiation': return ['propose_negotiation','contact_customer'];
+              case 'approved': return ['schedule_pickup','process_refund'];
+              case 'dispute': return ['contact_customer','resolve_dispute'];
+              default: return [];
+            }
+          })(r.status)
+        };
+      });
+      
+      // ========== DEBUG: Log final processed data ==========
+      console.log('\n🟢 === AFTER PROCESSING ===');
+      returnItems.forEach((refund: ReturnItem, idx: number) => {
+        console.log(`\nProcessed Refund ${idx + 1}:`);
+        console.log(`   Shop Name: ${refund.shop_name}`);
+        console.log(`   Shop Object Name: ${refund.shop?.name}`);
+        console.log(`   Items count: ${refund.order_items?.length || 0}`);
+      });
+      
+      console.log('\n📊 FINAL SUMMARY:');
+      console.log(`Total refunds: ${returnItems.length}`);
+      
       setRefundData(returnItems);
-
+  
       const newStats = {
         total_requests: returnItems.length,
         pending: returnItems.filter(i => i.status === 'pending').length,
@@ -321,11 +446,11 @@ export default function Refunds() {
         disputed: returnItems.filter(i => i.status === 'dispute').length,
         rejected_cancelled: returnItems.filter(i => ['rejected', 'cancelled', 'failed'].includes(i.status)).length,
       };
-
+  
       setStats(newStats);
-
+  
     } catch (error) {
-      console.error('Error fetching refund data:', error);
+      console.error('❌ Error fetching refund data:', error);
       Alert.alert('Error', 'Failed to load refund requests');
       setRefundData([]);
     } finally {
@@ -625,9 +750,18 @@ export default function Refunds() {
                     onPress={() => handleCardPress(refund.id)}
                     activeOpacity={0.7}
                   >
-                    {/* Header */}
+                    {/* ========== FIXED: Proper card header with shop name ========== */}
                     <View style={styles.cardHeader}>
                       <View style={styles.cardHeaderLeft}>
+                        {/* ========== FIX: Show shop name from either location ========== */}
+                        {(refund.shop_name || refund.shop?.name) && (
+                          <View style={styles.shopNameContainer}>
+                            <Ionicons name="storefront-outline" size={10} color="#3b82f6" />
+                            <Text style={styles.shopNameText} numberOfLines={1}>
+                              {refund.shop_name || refund.shop?.name}
+                            </Text>
+                          </View>
+                        )}
                         <View style={styles.refundIdContainer}>
                           <Ionicons name="cube-outline" size={14} color="#64748B" />
                           <Text style={styles.refundId} numberOfLines={1}>
@@ -643,6 +777,7 @@ export default function Refunds() {
                       </View>
                       {getStatusBadge(refund)}
                     </View>
+                    {/* ========== END FIXED ========== */}
 
                     {/* Product Info */}
                     <View style={styles.productInfo}>
@@ -1036,5 +1171,21 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '500',
+  },
+  shopNameContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    marginBottom: 4,
+    alignSelf: 'flex-start',
+    gap: 4,
+  },
+  shopNameText: {
+    fontSize: 9,
+    fontWeight: '500',
+    color: '#3b82f6',
   },
 });

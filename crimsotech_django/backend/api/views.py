@@ -35655,6 +35655,10 @@ class RefundViewSet(viewsets.ViewSet):
         shop_id = request.headers.get('X-Shop-Id') or request.query_params.get('shop_id')
         if not shop_id and hasattr(request, 'data'):
             shop_id = request.data.get('shop_id')
+
+        if not shop_id:
+            return None, Response({"error": "Shop ID required"}, 
+                              status=status.HTTP_400_BAD_REQUEST)
         
         shop = None
         if shop_id:
@@ -35663,27 +35667,39 @@ class RefundViewSet(viewsets.ViewSet):
             except Shop.DoesNotExist:
                 return None, Response({"error": "Shop not found"}, 
                                       status=status.HTTP_404_NOT_FOUND)
-        else:
-            # Try to infer shop from order items
-            shop_ids = list(
-                Checkout.objects.filter(
-                    order=order,
-                    cart_item__product__shop__isnull=False,
-                ).values_list('cart_item__product__shop_id', flat=True).distinct()
-            )
-            if len(shop_ids) != 1:
-                return None, Response({"error": "Shop ID required"}, 
-                                      status=status.HTTP_400_BAD_REQUEST)
-            try:
-                shop = Shop.objects.get(id=shop_ids[0])
-            except Shop.DoesNotExist:
-                return None, Response({"error": "Shop not found"}, 
-                                      status=status.HTTP_404_NOT_FOUND)
+        # else:
+        #     # Try to infer shop from order items
+        #     shop_ids = list(
+        #         Checkout.objects.filter(
+        #             order=order,
+        #             cart_item__product__shop__isnull=False,
+        #         ).values_list('cart_item__product__shop_id', flat=True).distinct()
+        #     )
+        #     if len(shop_ids) != 1:
+        #         return None, Response({"error": "Shop ID required"}, 
+        #                               status=status.HTTP_400_BAD_REQUEST)
+        #     try:
+        #         shop = Shop.objects.get(id=shop_ids[0])
+        #     except Shop.DoesNotExist:
+        #         return None, Response({"error": "Shop not found"}, 
+        #                               status=status.HTTP_404_NOT_FOUND)
 
         # Ownership check: User must own the shop
         if not shop.customer or not getattr(shop.customer, 'customer', None) or str(shop.customer.customer.id) != str(user.id):
             return None, Response({"error": "Not authorized for this shop"}, 
                                   status=status.HTTP_403_FORBIDDEN)
+        refund_shop_ids = set()
+
+        # Ensure the refund contains items from this shop
+        for item in refund.items.all():
+            if item.checkout and item.checkout.cart_item and item.checkout.cart_item.product:
+                shop_id_val = item.checkout.cart_item.product.shop_id
+                if shop_id_val:
+                    refund_shop_ids.add(str(shop_id_val))
+            
+            if item.checkout and item.checkout.direct_shop_id:
+                refund_shop_ids.add(str(item.checkout.direct_shop_id))
+
 
         # Ensure the order contains items from this shop
         if not Checkout.objects.filter(order=order, cart_item__product__shop=shop).exists():
@@ -35974,9 +35990,22 @@ class RefundViewSet(viewsets.ViewSet):
                     refund_type = 'replace'
                 else:
                     refund_type = 'keep'
+
+                first_checkout_id = items_data[0].get('checkout_id')
+                shop = None
+                if first_checkout_id:
+                    try:
+                        first_checkout = Checkout.objects.get(id=first_checkout_id)
+                        if first_checkout.cart_item and first_checkout.cart_item.product:
+                            shop = first_checkout.cart_item.product.shop
+                        elif first_checkout.direct_shop_id:
+                            shop = Shop.objects.filter(id=first_checkout.direct_shop_id).first()
+                    except Checkout.DoesNotExist:
+                        pass
                 refund = Refund.objects.create(
                     order_id=order,
                     requested_by=user,
+                    shop=shop, 
                     reason=refund_data['reason'],
                     buyer_preferred_refund_method=refund_data.get('preferred_refund_method'),
                     refund_type=refund_type,
@@ -36714,6 +36743,20 @@ class RefundViewSet(viewsets.ViewSet):
             shops = Shop.objects.filter(customer__customer=user)
             if not shops.exists():
                 return Response({"results": []})
+
+            if not shop_id:
+                return Response({"error": "X-Shop-Id header or shop_id parameter required"}, 
+                                status=status.HTTP_400_BAD_REQUEST)
+            
+            try:
+                target_shop = shops.get(id=shop_id)
+            except Shop.DoesNotExist:
+                return Response({"error": "Shop not found"}, 
+                                status=status.HTTP_404_NOT_FOUND)
+
+            refunds = Refund.objects.filter(
+                items__checkout__cart_item__product__shop=target_shop
+            ).distinct().order_by('-requested_at')
             
             # Filter by specific shop if provided
             if shop_id:
@@ -36728,6 +36771,15 @@ class RefundViewSet(viewsets.ViewSet):
             refunds = Refund.objects.filter(
                 order_id__checkout__cart_item__product__shop__in=shops
             ).distinct().order_by('-requested_at')
+            refunds = refunds.filter(shop=shop) 
+
+            direct_refunds = Refund.objects.filter(
+                items__checkout__direct_shop_id=str(target_shop.id)
+            ).distinct()
+            
+            # Combine both querysets
+            refunds = (refunds | direct_refunds).distinct().order_by('-requested_at')
+
             
             # Apply filters
             status_filter = request.query_params.get('status')
@@ -36764,7 +36816,82 @@ class RefundViewSet(viewsets.ViewSet):
             return Response({"error": "User not found"}, 
                             status=status.HTTP_404_NOT_FOUND)
 
+    # ========== ADD THIS NEW METHOD ==========
+    def _get_order_items_for_refund_shop(self, refund, request, shop):
+        """Return order items (checkout details) linked to this refund for a specific shop only."""
+        if not refund.order_id:
+            return []
 
+        # Get the checkout IDs from RefundItem for THIS SHOP only
+        checkout_ids = refund.items.filter(
+            checkout__cart_item__product__shop=shop
+        ).values_list('checkout', flat=True)
+        
+        # Also check direct shop ID
+        direct_checkout_ids = refund.items.filter(
+            checkout__direct_shop_id=str(shop.id)
+        ).values_list('checkout', flat=True)
+        
+        all_checkout_ids = list(checkout_ids) + list(direct_checkout_ids)
+        
+        if not all_checkout_ids:
+            return []
+
+        # Fetch the checkouts with related product info
+        checkouts = Checkout.objects.filter(
+            id__in=all_checkout_ids,
+            order=refund.order_id
+        ).select_related('cart_item__product__shop')
+
+        order_items = []
+        for checkout in checkouts:
+            cart_item = checkout.cart_item
+            if checkout.direct_product_id and not cart_item:
+                # Direct checkout item
+                refund_item = refund.items.filter(checkout=checkout).first()
+                order_items.append({
+                    "checkout_id": str(checkout.id),
+                    "product_id": checkout.direct_product_id,
+                    "product_name": checkout.direct_product_name or "Unknown Product",
+                    "shop_name": shop.name,
+                    "quantity": checkout.quantity,
+                    "refund_quantity": refund_item.quantity if refund_item else checkout.quantity,
+                    "price": str(checkout.direct_product_price or 0),
+                    "subtotal": str(checkout.total_amount),
+                    "refund_amount": str(refund_item.amount) if refund_item and refund_item.amount else '0',
+                    "product_image": convert_s3_to_public_url(checkout.direct_product_image) if checkout.direct_product_image else None,
+                    "shipping_fee": str(checkout.shipping_fee) if checkout.shipping_fee else '0',
+                    "shop": {
+                        "id": str(shop.id),
+                        "name": shop.name
+                    }
+                })
+            elif cart_item and cart_item.product:
+                product = cart_item.product
+                variant = cart_item.variant
+                refund_item = refund.items.filter(checkout=checkout).first()
+                
+                price = variant.price if variant and variant.price else (product.min_price or getattr(product, 'price', None))
+                
+                order_items.append({
+                    "checkout_id": str(checkout.id),
+                    "product_id": str(product.id),
+                    "product_name": product.name,
+                    "shop_name": product.shop.name if product.shop else '',
+                    "quantity": checkout.quantity,
+                    "refund_quantity": refund_item.quantity if refund_item else checkout.quantity,
+                    "price": str(price) if price else '0',
+                    "subtotal": str(checkout.total_amount),
+                    "refund_amount": str(refund_item.amount) if refund_item and refund_item.amount else '0',
+                    "product_image": self._get_product_image_url(product, request),
+                    "shop": {
+                        "id": str(product.shop.id) if product.shop else None,
+                        "name": product.shop.name if product.shop else None
+                    }
+                })
+        
+        return order_items
+    # ========== END ADD ==========
 
     @action(detail=True, methods=['get'])
     def get_seller_refund_details(self, request, pk=None):
@@ -36816,6 +36943,10 @@ class RefundViewSet(viewsets.ViewSet):
                 print(f"Warning: _get_refund_details_data returned non-dict for refund {pk}: {data}")
                 data = {}
 
+            data['order_items'] = self._get_order_items_for_refund_shop(refund, request, shop)
+             # Calculate shop-specific total
+            shop_total = sum(float(item.get('refund_amount', 0)) for item in data['order_items'])
+            data['shop_refund_amount'] = shop_total
          
             media_files = RefundMedia.objects.filter(refund_id=refund)
             media_serializer = RefundMediaSerializer(media_files, many=True, context={'request': request})
@@ -39110,6 +39241,22 @@ class RefundViewSet(viewsets.ViewSet):
         checkout_ids = refund.items.values_list('checkout', flat=True)
         if not checkout_ids:
             return []
+
+        if refund.shop:
+            # Get the checkout IDs from RefundItem for this specific shop
+            checkout_ids = refund.items.filter(
+                checkout__cart_item__product__shop=refund.shop
+            ).values_list('checkout', flat=True)
+            
+            direct_checkout_ids = refund.items.filter(
+                checkout__direct_shop_id=str(refund.shop.id)
+            ).values_list('checkout', flat=True)
+            
+            all_checkout_ids = list(checkout_ids) + list(direct_checkout_ids)
+        else:
+            # Original behavior for backward compatibility
+            checkout_ids = refund.items.values_list('checkout', flat=True)
+            all_checkout_ids = checkout_ids
 
         # Fetch the checkouts with related product info
         checkouts = Checkout.objects.filter(

@@ -675,6 +675,17 @@ export default function RequestRefundPage() {
 
   const validateForm = () => {
     if (selectedItems.length === 0) return 'Please select at least one item';
+
+    const uniqueShops = new Set();
+    for (const item of selectedItemsDetails) {
+      const shopId = item.shop_id;
+      if (shopId) {
+        uniqueShops.add(shopId);
+      }
+    }
+    if (uniqueShops.size > 1) {
+      return 'You can only request a refund for items from the same shop. Please select items from only one shop per refund request.';
+    }
     // Check that all selected items have valid quantities
     for (const item of selectedItemsDetails) {
       const qty = item.refundQuantity;
@@ -717,6 +728,9 @@ export default function RequestRefundPage() {
         amount: (parseFloat(item.price) * item.refundQuantity), 
       }));
 
+      const firstSelectedItem = selectedItemsDetails[0];
+      const shopId = firstSelectedItem?.shop_id || null;
+
       const breakdown = computeRefundBreakdown();
       const requestedBaseAmount = Number((breakdown.baseAmount || 0).toFixed(2));
       const feeAmount = Number((breakdown.fee || 0).toFixed(2));
@@ -736,6 +750,7 @@ export default function RequestRefundPage() {
       const formData = new FormData();
       const refundData = {
         order_id: order?.order_id,
+        shop_id: shopId, 
         reason: returnReason === 'Other' ? customReason : returnReason,
         preferred_refund_method: mapTypeToRefundMethod(selectedRefundMethod!.type),
         requested_refund_amount: requestedBaseAmount,
@@ -860,7 +875,7 @@ export default function RequestRefundPage() {
 
     let sellerDisplay = '';
     if (item.shop_name) {
-      sellerDisplay = `Shop: ${item.shop_name}`;
+      sellerDisplay = `📍 ${item.shop_name}`; 
     } else if (item.seller_username) {
       sellerDisplay = `Seller: ${item.seller_username}`;
     } else {
@@ -1320,7 +1335,32 @@ export default function RequestRefundPage() {
           <View style={styles.itemsList}>
             {order.items.map(renderOrderItem)}
           </View>
-          
+          {selectedItems.length > 0 && (() => {
+            const uniqueShops = [...new Set(selectedItemsDetails.map(item => item.shop_id))];
+            if (uniqueShops.length > 1) {
+              return (
+                <View style={styles.warningBox}>
+                  <Icon name="alert-circle" size={20} color="#f59e0b" />
+                  <Text style={styles.warningText}>
+                    You've selected items from {uniqueShops.length} different shops. 
+                    Please submit a separate refund request for each shop.
+                  </Text>
+                </View>
+              );
+            }
+            const shopName = selectedItemsDetails[0]?.shop_name;
+            if (shopName) {
+              return (
+                <View style={styles.shopInfoBox}>
+                  <Icon name="storefront-outline" size={16} color="#4f46e5" />
+                  <Text style={styles.shopInfoText}>
+                    Refunding from: <Text style={styles.shopInfoBold}>{shopName}</Text>
+                  </Text>
+                </View>
+              );
+            }
+            return null;
+          })()}
           {selectedItems.length > 0 && (
           <View style={styles.selectedSummary}>
             <Text style={styles.selectedCount}>
@@ -2006,5 +2046,41 @@ const styles = StyleSheet.create({
   modalFooter: { padding: 16, borderTopWidth: 1, borderTopColor: '#e5e7eb' },
   addNewButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, padding: 12, backgroundColor: '#f3f4f6', borderRadius: 8 },
   addNewButtonText: { fontSize: 14, color: '#4f46e5', fontWeight: '500' },
+  warningBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fffbeb',
+    borderWidth: 1,
+    borderColor: '#fde68a',
+    borderRadius: 10,
+    padding: 12,
+    marginTop: 12,
+    gap: 8,
+  },
+  warningText: {
+    flex: 1,
+    fontSize: 12,
+    color: '#b45309',
+    lineHeight: 16,
+  },
+  shopInfoBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f5f3ff',
+    borderWidth: 1,
+    borderColor: '#e0e7ff',
+    borderRadius: 10,
+    padding: 12,
+    marginTop: 12,
+    gap: 8,
+  },
+  shopInfoText: {
+    fontSize: 13,
+    color: '#4b5563',
+  },
+  shopInfoBold: {
+    fontWeight: '600',
+    color: '#4f46e5',
+  },
 });
 

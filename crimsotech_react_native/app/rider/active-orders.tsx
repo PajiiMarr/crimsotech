@@ -62,6 +62,8 @@ interface Delivery {
   refund_amount?: number;
   refund_id?: string;
   original_total?: number;
+  shop_id?: string;
+  shop_name?: string;
 }
 
 interface ActiveOrderMetrics {
@@ -143,7 +145,10 @@ export default function ActiveOrders() {
   const [imageErrors, setImageErrors] = useState<Record<string, boolean>>({});
   const [showPickupDialog, setShowPickupDialog] = useState(false);
   const [showProofModal, setShowProofModal] = useState(false);
+  
+
   const [proofMedia, setProofMedia] = useState<Array<{
+    
     file: {
       uri: string;
       name: string;
@@ -200,6 +205,7 @@ export default function ActiveOrders() {
       setRefreshing(false);
     }
   };
+  
 
   const handleImageError = (deliveryId: string) => {
     setImageErrors(prev => ({ ...prev, [deliveryId]: true }));
@@ -410,6 +416,7 @@ export default function ActiveOrders() {
       params: {
         deliveryId: delivery.id,
         orderId: delivery.order.order_id,
+        shopId: delivery.shop_id || '', 
       }
     });
   };
@@ -512,9 +519,35 @@ export default function ActiveOrders() {
     }
   };
 
+  const [selectedShopId, setSelectedShopId] = useState<string | null>(null);
+const [availableShops, setAvailableShops] = useState<Array<{id: string; name: string}>>([]);
+
+// Extract unique shops from deliveries
+useEffect(() => {
+  const shops = new Map<string, string>();
+  deliveries.forEach(delivery => {
+    if (delivery.shop_id && delivery.shop_name) {
+      shops.set(delivery.shop_id, delivery.shop_name);
+    }
+  });
+  setAvailableShops(Array.from(shops.entries()).map(([id, name]) => ({ id, name })));
+}, [deliveries]);
+
+// Filter deliveries by selected shop
+const filteredByShopDeliveries = useMemo(() => {
+  if (!selectedShopId) return filteredDeliveries;
+  return filteredDeliveries.filter(d => d.shop_id === selectedShopId);
+}, [filteredDeliveries, selectedShopId]);
   useEffect(() => {
-    fetchDeliveryData();
-  }, []);
+    const shops = new Map<string, string>();
+    deliveries.forEach(delivery => {
+      if (delivery.shop_id && delivery.shop_name) {
+        shops.set(delivery.shop_id, delivery.shop_name);
+      }
+    });
+    setAvailableShops(Array.from(shops.entries()).map(([id, name]) => ({ id, name })));
+  }, [deliveries]);
+  
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -674,6 +707,14 @@ export default function ActiveOrders() {
                               </View>
                             )}
                           </View>
+                          {delivery.shop_name && (
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+          <Ionicons name="storefront-outline" size={12} color="#3B82F6" />
+          <Text style={{ fontSize: 11, color: '#3B82F6', marginLeft: 4, fontWeight: '500' }} numberOfLines={1}>
+            {delivery.shop_name}
+          </Text>
+        </View>
+      )}
                           <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
                             <Text style={{ fontSize: 11, color: '#6B7280' }} numberOfLines={1}>
                               {customer.first_name} {customer.last_name}
@@ -791,6 +832,12 @@ export default function ActiveOrders() {
                   <Text style={{ fontSize: 12, fontWeight: '500' }}>Customer:</Text>
                   <Text style={{ fontSize: 12 }}>{selectedDelivery.order.customer.first_name} {selectedDelivery.order.customer.last_name}</Text>
                 </View>
+                {selectedDelivery.delivery_type === 'return' && selectedDelivery.shop_name && (
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+              <Text style={{ fontSize: 12, fontWeight: '500' }}>Shop:</Text>
+              <Text style={{ fontSize: 12, color: '#3B82F6' }}>{selectedDelivery.shop_name}</Text>
+            </View>
+          )}
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
                   <Text style={{ fontSize: 12, fontWeight: '500' }}>Amount:</Text>
                   <Text style={{ fontSize: 12, fontWeight: '600' }}>{formatCurrency(selectedDelivery.order.total_amount)}</Text>

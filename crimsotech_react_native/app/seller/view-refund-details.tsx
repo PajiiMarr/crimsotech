@@ -1654,13 +1654,13 @@ if (returnStatus === 'shipped') {
   if (!refund) {
     return (
       <SafeAreaView style={styles.container}>
-        <View style={styles.header}>
+        {/* <View style={styles.header}>
           <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
             <Ionicons name="arrow-back" size={22} color="#1F2937" />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Refund Details</Text>
           <View style={{ width: 36 }} />
-        </View>
+        </View> */}
         <View style={styles.center}><Text style={styles.emptyText}>Refund not found</Text></View>
       </SafeAreaView>
     );
@@ -1733,6 +1733,14 @@ if (returnStatus === 'shipped') {
       </Text>
     </View>
   </View>
+  {/* {(refund.shop_name || refund.shop?.name) && (
+    <View style={styles.shopNameContainer}>
+      <Ionicons name="storefront-outline" size={14} color="#3B82F6" />
+      <Text style={styles.shopNameText}>
+        {refund.shop_name || refund.shop?.name}
+      </Text>
+    </View>
+  )} */}
   <Text style={styles.statusDescription}>{getStatusDescription()}</Text>
   
   {/* ADD RIDER DETAILS - Show for Approved - Shipped status */}
@@ -2298,5 +2306,29 @@ riderInfoText: {
   fontSize: 13,
   color: '#1F2937',
   flex: 1,
+},
+shopNameContainer: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  backgroundColor: '#EFF6FF',
+  paddingHorizontal: 12,
+  paddingVertical: 6,
+  borderRadius: 8,
+  marginBottom: 12,
+  alignSelf: 'flex-start',
+  gap: 6,
+},
+shopNameText: {
+  fontSize: 13,
+  fontWeight: '600',
+  color: '#3B82F6',
+},
+itemsShopNote: {
+  fontSize: 12,
+  color: '#6B7280',
+  marginBottom: 12,
+  paddingBottom: 8,
+  borderBottomWidth: 1,
+  borderBottomColor: '#F3F4F6',
 },
 });
