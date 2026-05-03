@@ -32622,6 +32622,7 @@ class RiderOrdersActive(viewsets.ViewSet):
                 print(f"Error fetching return request: {e}")
 
         # Get refund items for this specific delivery
+        # Get refund items for this specific delivery
         refund_items_data = []
         if is_return_delivery:
             # Get refund_id from delivery metadata
@@ -32630,14 +32631,32 @@ class RiderOrdersActive(viewsets.ViewSet):
                 try:
                     from api.models import Refund, RefundItem
                     specific_refund = Refund.objects.get(refund_id=specific_refund_id)
+                    
+                    # CRITICAL: Filter refund items by shop_id if delivery has a shop
                     refund_items = RefundItem.objects.filter(refund=specific_refund)
+                    
                     for refund_item in refund_items:
-                        refund_items_data.append({
-                            "checkout_id": str(refund_item.checkout.id),
-                            "quantity": refund_item.quantity,
-                            "amount": str(refund_item.amount)
-                        })
-                        print(f"✅ Refund item from specific refund {specific_refund_id}: checkout_id={refund_item.checkout.id}, amount={refund_item.amount}")
+                        # Get the shop_id of this refund item
+                        item_shop_id = None
+                        if refund_item.checkout.cart_item and refund_item.checkout.cart_item.product and refund_item.checkout.cart_item.product.shop:
+                            item_shop_id = str(refund_item.checkout.cart_item.product.shop.id)
+                        
+                        # Only include if shop matches OR no shop filter
+                        if delivery_shop_id and item_shop_id == delivery_shop_id:
+                            refund_items_data.append({
+                                "checkout_id": str(refund_item.checkout.id),
+                                "quantity": refund_item.quantity,
+                                "amount": str(refund_item.amount)
+                            })
+                            print(f"✅ Refund item from specific refund {specific_refund_id}: checkout_id={refund_item.checkout.id}, amount={refund_item.amount}")
+                        elif not delivery_shop_id:
+                            refund_items_data.append({
+                                "checkout_id": str(refund_item.checkout.id),
+                                "quantity": refund_item.quantity,
+                                "amount": str(refund_item.amount)
+                            })
+                            print(f"✅ Refund item (no shop filter): checkout_id={refund_item.checkout.id}, amount={refund_item.amount}")
+                            
                     refund_id = specific_refund_id
                 except Refund.DoesNotExist:
                     print(f"⚠️ Refund {specific_refund_id} not found")
@@ -32647,12 +32666,25 @@ class RiderOrdersActive(viewsets.ViewSet):
                     from api.models import Refund, RefundItem
                     refund = Refund.objects.get(refund_id=refund_id)
                     refund_items = RefundItem.objects.filter(refund=refund)
+                    
                     for refund_item in refund_items:
-                        refund_items_data.append({
-                            "checkout_id": str(refund_item.checkout.id),
-                            "quantity": refund_item.quantity,
-                            "amount": str(refund_item.amount)
-                        })
+                        # Filter by shop if needed
+                        item_shop_id = None
+                        if refund_item.checkout.cart_item and refund_item.checkout.cart_item.product and refund_item.checkout.cart_item.product.shop:
+                            item_shop_id = str(refund_item.checkout.cart_item.product.shop.id)
+                        
+                        if delivery_shop_id and item_shop_id == delivery_shop_id:
+                            refund_items_data.append({
+                                "checkout_id": str(refund_item.checkout.id),
+                                "quantity": refund_item.quantity,
+                                "amount": str(refund_item.amount)
+                            })
+                        elif not delivery_shop_id:
+                            refund_items_data.append({
+                                "checkout_id": str(refund_item.checkout.id),
+                                "quantity": refund_item.quantity,
+                                "amount": str(refund_item.amount)
+                            })
                 except Exception as e:
                     print(f"Error fetching fallback refund items: {e}")
 
@@ -32682,13 +32714,44 @@ class RiderOrdersActive(viewsets.ViewSet):
             # If delivery has a shop_id in metadata, only include items from that shop
             if delivery_shop_id and item_shop_id == delivery_shop_id:
                 checkout_items.append(item)
-                shop_total_amount += item.total_amount
-                print(f"✅ Added item from shop {item_shop_id}, amount: {item.total_amount}")
+                
+                # CRITICAL FIX: For return deliveries, use refund amount instead of original total
+                if is_return_delivery and refund_items_data:
+                    # Find matching refund item for this checkout
+                    matching_refund = next(
+                        (ri for ri in refund_items_data if ri['checkout_id'] == str(item.id)),
+                        None
+                    )
+                    if matching_refund:
+                        refund_amount = Decimal(matching_refund['amount'])
+                        shop_total_amount += refund_amount
+                        print(f"✅ Using refund amount {refund_amount} for item {item.id} (original: {item.total_amount})")
+                    else:
+                        shop_total_amount += item.total_amount
+                        print(f"⚠️ No refund match for item {item.id}, using original {item.total_amount}")
+                else:
+                    shop_total_amount += item.total_amount
+                    print(f"✅ Added item from shop {item_shop_id}, amount: {item.total_amount}")
+                    
             elif not delivery_shop_id:
                 # No shop_id in delivery (legacy or single shop order) - include all
                 checkout_items.append(item)
-                shop_total_amount += item.total_amount
-                print(f"📦 Added all items (legacy/single shop mode)")
+                
+                # For return deliveries in legacy mode
+                if is_return_delivery and refund_items_data:
+                    matching_refund = next(
+                        (ri for ri in refund_items_data if ri['checkout_id'] == str(item.id)),
+                        None
+                    )
+                    if matching_refund:
+                        refund_amount = Decimal(matching_refund['amount'])
+                        shop_total_amount += refund_amount
+                        print(f"✅ Legacy return: Using refund amount {refund_amount} for item {item.id}")
+                    else:
+                        shop_total_amount += item.total_amount
+                else:
+                    shop_total_amount += item.total_amount
+                    print(f"📦 Added all items (legacy/single shop mode)")
         
         print(f"📦 Total items for this delivery: {len(checkout_items)}")
         print(f"💰 Shop total amount: {shop_total_amount}")
@@ -33025,6 +33088,7 @@ class RiderOrdersActive(viewsets.ViewSet):
             # For return deliveries, get the refund amount
             # For return deliveries, get the refund amount
             # For return deliveries, get the refund amount
+            # For return deliveries, get the refund amount
             display_total_amount = float(order.total_amount)
             is_return_delivery = False
             refund_amount = None
@@ -33034,30 +33098,45 @@ class RiderOrdersActive(viewsets.ViewSet):
                 is_return_delivery = True
                 try:
                     from api.models import Refund, RefundItem
-                    # Try to get refund_id from delivery metadata first
+                    
+                    # CRITICAL: Get the SPECIFIC refund_id from delivery metadata
                     refund_id = None
+                    specific_refund_items = []
+                    
                     if delivery.metadata and delivery.metadata.get('refund_id'):
                         refund_id = delivery.metadata.get('refund_id')
-                    else:
-                        # Fallback: find refund by order
-                        refund = Refund.objects.filter(order_id=order).first()
-                        if refund:
-                            refund_id = str(refund.refund_id)
-                    
-                    if refund_id:
-                        refund = Refund.objects.get(refund_id=refund_id)
-                        refund_items = RefundItem.objects.filter(refund=refund)
-                        total_refund_amount = sum(float(item.amount) for item in refund_items if item.amount)
+                        print(f"🔍 Return delivery {delivery.id} has refund_id: {refund_id}")
+                        
+                        # Get the specific refund for THIS delivery only
+                        specific_refund = Refund.objects.get(refund_id=refund_id)
+                        
+                        # Get ONLY the refund items for this specific refund
+                        refund_items = RefundItem.objects.filter(refund=specific_refund)
+                        
+                        # Calculate total for THIS refund only
+                        total_refund_amount = Decimal('0.00')
+                        for item in refund_items:
+                            if item.amount:
+                                total_refund_amount += Decimal(str(item.amount))
+                                specific_refund_items.append({
+                                    'checkout_id': str(item.checkout.id),
+                                    'amount': str(item.amount)
+                                })
+                        
                         if total_refund_amount > 0:
-                            display_total_amount = total_refund_amount
-                            refund_amount = total_refund_amount
-                            print(f"✅ Return delivery for order {order.order}: showing refund amount {total_refund_amount}")
+                            display_total_amount = float(total_refund_amount)
+                            refund_amount = float(total_refund_amount)
+                            print(f"✅ Return delivery {delivery.id}: showing refund amount {total_refund_amount} from refund {refund_id}")
+                            print(f"   Refund items: {specific_refund_items}")
                         else:
-                            print(f"⚠️ Return delivery but no refund items found for order {order.order}")
+                            print(f"⚠️ Return delivery {delivery.id} has refund {refund_id} but no refund items")
                     else:
-                        print(f"⚠️ Return delivery but no refund record for order {order.order}")
+                        print(f"⚠️ Return delivery {delivery.id} has NO refund_id in metadata")
+                        
+                except Refund.DoesNotExist:
+                    print(f"❌ Refund {refund_id} not found for delivery {delivery.id}")
                 except Exception as e:
-                    print(f"Error getting refund amount for return delivery: {e}")
+                    print(f"Error getting refund amount for return delivery {delivery.id}: {e}")
             else:
                 # For normal deliveries (delivery_type = 'order'), ALWAYS use order.total_amount
                 display_total_amount = float(order.total_amount)
@@ -33095,6 +33174,8 @@ class RiderOrdersActive(viewsets.ViewSet):
                 "delivery_type": delivery.delivery_type,  # ADD THIS LINE
                 "refund_amount": refund_amount if is_return_delivery else None,  # ADD THIS LINE
                 "original_total": float(order.total_amount) if is_return_delivery else None, 
+                "shop_id": delivery.metadata.get('shop_id') if delivery.metadata else None,  # ADD THIS
+                "shop_name": None,  # ADD THIS - will be populated below
                 "order": {
                     "order_id": str(order.order),
                     "customer": {
@@ -33122,6 +33203,13 @@ class RiderOrdersActive(viewsets.ViewSet):
                 "proofs_count": Proof.objects.filter(delivery=delivery).count(),
             }
             deliveries_data.append(delivery_info)
+            if delivery.metadata and delivery.metadata.get('shop_id'):
+                try:
+                    shop = Shop.objects.filter(id=delivery.metadata.get('shop_id')).first()
+                    if shop:
+                        delivery_info["shop_name"] = shop.name
+                except Exception:
+                    pass
         
         # Get pending orders (orders without rider assignment)
         pending_orders = Order.objects.filter(
@@ -33870,6 +33958,7 @@ class RiderOrdersActive(viewsets.ViewSet):
             order=refund.order_id,
             rider=rider,
             delivery_type='return',
+            metadata__refund_id=str(refund.refund_id),
             status__in=['pending_offer', 'pending']
         ).first()
         
