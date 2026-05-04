@@ -27092,14 +27092,8 @@ class CheckoutOrder(viewsets.ViewSet):
                 'units': 'metric'
             }
             
-            print(f"[DISTANCE] Google Maps Request URL: {url}")
-            print(f"[DISTANCE] Origins: {origin_lat},{origin_lng}")
-            print(f"[DISTANCE] Destinations: {dest_lat},{dest_lng}")
-            
             response = requests.get(url, params=params, timeout=5)
             data = response.json()
-            
-            print(f"[DISTANCE] Google Maps Response Status: {data.get('status')}")
             
             if data.get('status') == 'OK':
                 rows = data.get('rows', [])
@@ -27109,27 +27103,12 @@ class CheckoutOrder(viewsets.ViewSet):
                         distance_meters = elements[0].get('distance', {}).get('value', 0)
                         if distance_meters > 0:
                             distance_km = distance_meters / 1000
-                            logger.info(f"📍 Google Maps driving distance: {distance_km} km")
-                            print(f"[DISTANCE] ✅ Google Maps distance: {distance_km} km")
                             return distance_km
-                        else:
-                            print(f"[DISTANCE] ⚠️ Distance value is 0")
-                    else:
-                        print(f"[DISTANCE] ⚠️ Element status: {elements[0].get('status') if elements else 'No elements'}")
-                else:
-                    print(f"[DISTANCE] ⚠️ No rows in response")
             
-            logger.warning(f"Google Maps API returned status: {data.get('status')}")
-            print(f"[DISTANCE] ❌ Google Maps API returned status: {data.get('status')}")
             return None
             
-        except requests.exceptions.Timeout:
-            logger.error("Google Maps API timeout")
-            print(f"[DISTANCE] ❌ Google Maps API timeout")
-            return None
         except Exception as e:
             logger.error(f"Google Maps API error: {str(e)}")
-            print(f"[DISTANCE] ❌ Google Maps API error: {str(e)}")
             return None
     
     def _calculate_distance(self, origin_lat: float, origin_lng: float, dest_lat: float, dest_lng: float) -> float:
@@ -27137,20 +27116,13 @@ class CheckoutOrder(viewsets.ViewSet):
         Calculate distance using Google Maps API first, fallback to Haversine
         Returns distance in kilometers
         """
-        print(f"[DISTANCE] Calculating distance between ({origin_lat}, {origin_lng}) and ({dest_lat}, {dest_lng})")
-        
-        # Try Google Maps API first
         google_distance = self._get_google_maps_distance(origin_lat, origin_lng, dest_lat, dest_lng)
         
         if google_distance is not None and google_distance > 0:
-            print(f"[DISTANCE] Using Google Maps result: {google_distance} km")
             return google_distance
         
-        # Fallback to Haversine (add 30% buffer to approximate road distance)
         haversine_distance = self._calculate_haversine_distance(origin_lat, origin_lng, dest_lat, dest_lng)
-        road_estimate = haversine_distance * 1.3  # 30% buffer for roads
-        logger.info(f"📍 Using Haversine fallback: {haversine_distance:.2f} km (straight line), {road_estimate:.2f} km (estimated road)")
-        print(f"[DISTANCE] Using Haversine fallback: {haversine_distance:.2f} km (straight), {road_estimate:.2f} km (estimated road)")
+        road_estimate = haversine_distance * 1.3
         return road_estimate
     
     def _format_distance(self, distance_km: float) -> str:
@@ -27164,18 +27136,21 @@ class CheckoutOrder(viewsets.ViewSet):
     def _calculate_delivery_fee(self, distance_km: float) -> float:
         """
         Calculate dynamic delivery fee based on distance
-        Base fee: ₱40 per kilometer, capped at ₱300
+        Minimum: ₱50 for 3km, Maximum: ₱150, increasing ₱10 per km
         """
         if distance_km <= 0:
-            print(f"[FEE] Distance is 0 or less, returning base fee ₱40.00")
-            return 40.00
+            return 50.00
         
-        # ₱40 per kilometer, capped at ₱300
-        fee = distance_km * 40.00
-        fee = min(fee, 300.00)
+        if distance_km <= 3:
+            return 50.00
         
-        logger.info(f"💰 Delivery fee calculated: ₱{fee:.2f} for {distance_km:.2f} km (₱40/km, capped at ₱300)")
-        print(f"[FEE] Delivery fee: ₱{fee:.2f} for {distance_km:.2f} km")
+        # For distances beyond 3km: ₱50 base + ₱10 per additional km, capped at ₱150
+        additional_km = distance_km - 3
+        fee = 50.00 + (additional_km * 10.00)
+        
+        # Cap at ₱150 maximum
+        fee = min(fee, 150.00)
+        
         return fee
 
     def _calculate_transaction_fee(self, amount: Decimal, payment_method: str) -> Decimal:
@@ -27183,13 +27158,9 @@ class CheckoutOrder(viewsets.ViewSet):
         Calculate transaction fee for ALL payment methods
         5% capped at ₱50 for all payment methods
         """
-        # Apply transaction fee to ALL payment methods (COD, Maya, GCash, etc.)
         fee = amount * Decimal('0.05')
-        # Cap at ₱50
         if fee > Decimal('50.00'):
             fee = Decimal('50.00')
-        logger.info(f"💰 Transaction fee calculated: ₱{fee:.2f} for {payment_method} payment on ₱{amount:.2f}")
-        print(f"[FEE] Transaction fee: ₱{fee:.2f} (5% capped at ₱50) for {payment_method}")
         return fee.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
     def _get_customer_coordinates(self, user_id, selected_address_id=None):
@@ -27197,7 +27168,6 @@ class CheckoutOrder(viewsets.ViewSet):
         Get customer coordinates from selected shipping address or fallback to user coordinates
         Returns (latitude, longitude, source_description)
         """
-        # Try to get from selected shipping address first
         if selected_address_id:
             try:
                 shipping_address = ShippingAddress.objects.get(
@@ -27206,12 +27176,10 @@ class CheckoutOrder(viewsets.ViewSet):
                     is_active=True
                 )
                 if shipping_address.latitude and shipping_address.longitude:
-                    print(f"[COORDS] ✅ Using coordinates from selected shipping address: ({shipping_address.latitude}, {shipping_address.longitude})")
                     return float(shipping_address.latitude), float(shipping_address.longitude), "shipping_address"
             except ShippingAddress.DoesNotExist:
-                print(f"[COORDS] ⚠️ Selected shipping address {selected_address_id} not found")
+                pass
         
-        # Fallback to user's default shipping address
         try:
             default_address = ShippingAddress.objects.filter(
                 user_id=user_id,
@@ -27220,23 +27188,17 @@ class CheckoutOrder(viewsets.ViewSet):
             ).first()
             
             if default_address and default_address.latitude and default_address.longitude:
-                print(f"[COORDS] ✅ Using coordinates from default shipping address: ({default_address.latitude}, {default_address.longitude})")
                 return float(default_address.latitude), float(default_address.longitude), "default_shipping_address"
-        except Exception as e:
-            print(f"[COORDS] ⚠️ Error getting default address: {e}")
+        except Exception:
+            pass
         
-        # Final fallback: use user's coordinates from User model
         try:
             user = User.objects.get(id=user_id)
             if user.latitude and user.longitude:
-                print(f"[COORDS] ✅ Using coordinates from User profile: ({user.latitude}, {user.longitude})")
                 return float(user.latitude), float(user.longitude), "user_profile"
         except User.DoesNotExist:
-            print(f"[COORDS] ❌ User {user_id} not found")
-        except Exception as e:
-            print(f"[COORDS] ⚠️ Error getting user coordinates: {e}")
+            pass
         
-        print(f"[COORDS] ❌ No coordinates found for customer")
         return None, None, None
     
     @action(detail=False, methods=['GET'], url_path='get_checkout_items')
@@ -27247,18 +27209,9 @@ class CheckoutOrder(viewsets.ViewSet):
         selected_ids_str = request.GET.get("selected", "")
         selected_address_id = request.GET.get("selected_address_id", None)
 
-        print("=" * 80)
-        print("[CHECKOUT] ===== STARTING CHECKOUT =====")
-        print(f"[CHECKOUT] User ID: {user_id}")
-        print(f"[CHECKOUT] Selected Address ID: {selected_address_id}")
-        print(f"[CHECKOUT] Product ID: {product_id}")
-        print(f"[CHECKOUT] Cart ID: {cart_id}")
-        print("=" * 80)
-
         if not user_id:
             return Response({"error": "user_id is required"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Determine which entry point was used
         if cart_id:
             try:
                 cart_items = CartItem.objects.filter(
@@ -27406,20 +27359,12 @@ class CheckoutOrder(viewsets.ViewSet):
             shop_ids = set()
             shop_addresses = {}
             personal_seller_addresses = {}
-            per_shop_delivery_fees = []  # NEW: Store per-shop delivery fees
+            per_shop_delivery_fees = []
 
-            # Get customer coordinates (auto-fallback to user profile if no address selected)
             customer_lat, customer_lng, coord_source = self._get_customer_coordinates(user_id, selected_address_id)
-            
-            if customer_lat and customer_lng:
-                print(f"[COORDS] 📍 Customer coordinates source: {coord_source}")
-                print(f"[COORDS] 📍 Customer location: ({customer_lat}, {customer_lng})")
-            else:
-                print(f"[COORDS] ❌ No customer coordinates available")
 
-            # Track totals - VAT already included in variant price
             subtotal = Decimal('0')
-            total_delivery_fee = Decimal('0')  # NEW: Track total delivery fee
+            total_delivery_fee = Decimal('0')
 
             for cart_item in cart_items:
                 product = cart_item.product
@@ -27429,26 +27374,6 @@ class CheckoutOrder(viewsets.ViewSet):
                 if shop:
                     shop_ids.add(shop.id)
                     if shop.id not in shop_addresses:
-                        print("=" * 80)
-                        print("🏪 [SELLER SHOP ADDRESS DETAILS]")
-                        print(f"  Shop ID: {shop.id}")
-                        print(f"  Shop Name: {shop.name}")
-                        print(f"  Description: {shop.description}")
-                        print(f"  Street: {shop.street}")
-                        print(f"  Barangay: {shop.barangay}")
-                        print(f"  City: {shop.city}")
-                        print(f"  Province: {shop.province}")
-                        print(f"  Contact Number: {shop.contact_number}")
-                        print(f"  Verified: {shop.verified}")
-                        print(f"  Status: {shop.status}")
-                        print(f"  Full Address: {shop.street}, {shop.barangay}, {shop.city}, {shop.province}")
-                        print(f"  Latitude: {shop.latitude}")
-                        print(f"  Longitude: {shop.longitude}")
-                        print("=" * 80)
-                        
-                        logger.info(f"🏪 Seller Shop: {shop.name}")
-                        logger.info(f"📍 Shop address: {shop.street}, {shop.barangay}, {shop.city}, {shop.province}")
-                        
                         distance_km = None
                         distance_text = None
                         shop_delivery_fee = Decimal('0')
@@ -27456,7 +27381,6 @@ class CheckoutOrder(viewsets.ViewSet):
                         if customer_lat and customer_lng:
                             if shop.latitude and shop.longitude:
                                 try:
-                                    print(f"[DISTANCE] 🔄 Calculating distance from customer to shop...")
                                     distance_km = self._calculate_distance(
                                         customer_lat,
                                         customer_lng,
@@ -27467,7 +27391,6 @@ class CheckoutOrder(viewsets.ViewSet):
                                     shop_delivery_fee = Decimal(str(self._calculate_delivery_fee(distance_km)))
                                     total_delivery_fee += shop_delivery_fee
                                     
-                                    # Store per-shop delivery fee
                                     per_shop_delivery_fees.append({
                                         'shop_id': str(shop.id),
                                         'shop_name': shop.name,
@@ -27475,16 +27398,8 @@ class CheckoutOrder(viewsets.ViewSet):
                                         'distance_text': distance_text,
                                         'delivery_fee': float(shop_delivery_fee)
                                     })
-                                    
-                                    print(f"[DISTANCE] ✅ Calculated distance: {distance_km} km ({distance_text})")
-                                    print(f"[DISTANCE] 💰 Shop delivery fee: ₱{shop_delivery_fee}")
-                                    logger.info(f"📏 Calculated distance: {distance_text}")
                                 except (ValueError, TypeError) as e:
-                                    print(f"[DISTANCE] ❌ Error calculating distance: {e}")
-                            else:
-                                print(f"[DISTANCE] ❌ Shop missing coordinates! Lat: {shop.latitude}, Lng: {shop.longitude}")
-                        else:
-                            print(f"[DISTANCE] ❌ Cannot calculate distance - missing customer coordinates")
+                                    pass
                         
                         shop_addresses[shop.id] = {
                             'shop_id': str(shop.id),
@@ -27498,7 +27413,7 @@ class CheckoutOrder(viewsets.ViewSet):
                             'address_type': 'shop',
                             'distance_km': distance_km,
                             'distance_text': distance_text,
-                            'delivery_fee': float(shop_delivery_fee) if shop_delivery_fee else 0  # Add delivery fee to shop address
+                            'delivery_fee': float(shop_delivery_fee) if shop_delivery_fee else 0
                         }
                 elif product and product.customer:
                     seller_user = product.customer.customer
@@ -27513,25 +27428,6 @@ class CheckoutOrder(viewsets.ViewSet):
                         ]
                         full_address = ', '.join(filter(None, address_parts))
                         
-                        print("=" * 80)
-                        print("👤 [PERSONAL SELLER ADDRESS DETAILS]")
-                        print(f"  Seller ID: {seller_id}")
-                        print(f"  Seller Name: {seller_user.first_name} {seller_user.last_name}")
-                        print(f"  Username: {seller_user.username}")
-                        print(f"  Email: {seller_user.email}")
-                        print(f"  Phone: {seller_user.contact_number}")
-                        print(f"  Street: {seller_user.street}")
-                        print(f"  Barangay: {seller_user.barangay}")
-                        print(f"  City: {seller_user.city}")
-                        print(f"  Province: {seller_user.province}")
-                        print(f"  Full Address: {full_address}")
-                        print(f"  Latitude: {seller_user.latitude if hasattr(seller_user, 'latitude') else 'N/A'}")
-                        print(f"  Longitude: {seller_user.longitude if hasattr(seller_user, 'longitude') else 'N/A'}")
-                        print("=" * 80)
-                        
-                        logger.info(f"👤 Personal Seller: {seller_user.first_name} {seller_user.last_name}")
-                        logger.info(f"📍 Seller address: {full_address}")
-                        
                         distance_km = None
                         distance_text = None
                         seller_delivery_fee = Decimal('0')
@@ -27539,7 +27435,6 @@ class CheckoutOrder(viewsets.ViewSet):
                         if customer_lat and customer_lng:
                             if hasattr(seller_user, 'latitude') and seller_user.latitude and hasattr(seller_user, 'longitude') and seller_user.longitude:
                                 try:
-                                    print(f"[DISTANCE] 🔄 Calculating distance from customer to seller...")
                                     distance_km = self._calculate_distance(
                                         customer_lat,
                                         customer_lng,
@@ -27550,7 +27445,6 @@ class CheckoutOrder(viewsets.ViewSet):
                                     seller_delivery_fee = Decimal(str(self._calculate_delivery_fee(distance_km)))
                                     total_delivery_fee += seller_delivery_fee
                                     
-                                    # Store per-seller delivery fee
                                     per_shop_delivery_fees.append({
                                         'shop_id': seller_id,
                                         'shop_name': f"{seller_user.first_name} {seller_user.last_name}".strip() or seller_user.username,
@@ -27558,16 +27452,8 @@ class CheckoutOrder(viewsets.ViewSet):
                                         'distance_text': distance_text,
                                         'delivery_fee': float(seller_delivery_fee)
                                     })
-                                    
-                                    print(f"[DISTANCE] ✅ Calculated distance: {distance_km} km ({distance_text})")
-                                    print(f"[DISTANCE] 💰 Seller delivery fee: ₱{seller_delivery_fee}")
-                                    logger.info(f"📏 Calculated distance: {distance_text}")
                                 except (ValueError, TypeError) as e:
-                                    print(f"[DISTANCE] ❌ Error calculating distance: {e}")
-                            else:
-                                print(f"[DISTANCE] ❌ Seller missing coordinates!")
-                        else:
-                            print(f"[DISTANCE] ❌ Cannot calculate distance - missing customer coordinates")
+                                    pass
                         
                         personal_seller_addresses[seller_id] = {
                             'seller_id': seller_id,
@@ -27584,14 +27470,12 @@ class CheckoutOrder(viewsets.ViewSet):
                             'delivery_fee': float(seller_delivery_fee) if seller_delivery_fee else 0
                         }
 
-                # Get price (already includes VAT from variant)
                 price = Decimal('0')
                 if variant and variant.price is not None:
                     price = Decimal(str(variant.price))
                 elif product and hasattr(product, 'price') and product.price is not None:
                     price = Decimal(str(product.price))
 
-                # Calculate line total
                 line_total = price * cart_item.quantity
                 subtotal += line_total
 
@@ -27608,7 +27492,6 @@ class CheckoutOrder(viewsets.ViewSet):
                         base_price = price_with_vat / Decimal('1.12')
                         vat_amount = price_with_vat - base_price
 
-                # Get product image using storage utility
                 product_image_url = None
                 if variant and variant.image and hasattr(variant.image, 'url'):
                     try:
@@ -27625,7 +27508,6 @@ class CheckoutOrder(viewsets.ViewSet):
                         except Exception:
                             product_image_url = first_media.file_data.url
 
-                # Get delivery fee for this specific item's shop
                 item_delivery_fee = Decimal('0')
                 if shop:
                     shop_id_str = str(shop.id)
@@ -27657,8 +27539,8 @@ class CheckoutOrder(viewsets.ViewSet):
                     "subtotal": float(line_total),
                     "is_ordered": cart_item.is_ordered if hasattr(cart_item, 'is_ordered') else False,
                     "is_personal_listing": shop is None and product and product.customer is not None,
-                    "delivery_fee": float(item_delivery_fee),  # NEW: Add delivery fee per item
-                    "distance_km": float(item_delivery_fee / 40) if item_delivery_fee > 0 and item_delivery_fee < 300 else None  # Approximate distance from fee
+                    "delivery_fee": float(item_delivery_fee),
+                    "distance_km": float(item_delivery_fee / 10) if item_delivery_fee > 0 and item_delivery_fee < 300 else None
                 }
 
                 if variant:
@@ -27686,22 +27568,8 @@ class CheckoutOrder(viewsets.ViewSet):
                     }
 
                 checkout_items.append(item_data)
-
-            print(f"[DISTANCE] Total delivery fee across all shops: ₱{total_delivery_fee}")
             
-            # Calculate final total
             total = float(subtotal) + float(total_delivery_fee)
-            
-            print("=" * 80)
-            print("[TOTALS]")
-            print(f"  Subtotal: ₱{subtotal:.2f}")
-            print(f"  Total Delivery Fee: ₱{total_delivery_fee:.2f}")
-            print(f"  Total: ₱{total:.2f}")
-            print("=" * 80)
-            
-            logger.info(f"💰 Subtotal: ₱{subtotal:.2f}")
-            logger.info(f"💰 Total Delivery Fee: ₱{total_delivery_fee:.2f} (sum of per-shop fees)")
-            logger.info(f"💰 Total: ₱{total:.2f}")
 
             user_purchase_history = self._get_user_purchase_history(user_id)
 
@@ -27739,16 +27607,16 @@ class CheckoutOrder(viewsets.ViewSet):
                 "checkout_items": checkout_items,
                 "summary": {
                     "subtotal": float(subtotal),
-                    "delivery": float(total_delivery_fee),  # Now this is the SUM of all per-shop fees
+                    "delivery": float(total_delivery_fee),
                     "total": total,
                     "item_count": len(checkout_items),
                     "shop_count": len(shop_ids) + len(personal_seller_addresses),
                     "personal_seller_count": len(personal_seller_addresses),
-                    "delivery_fee_rate": "₱40/km, capped at ₱300 per shop",
+                    "delivery_fee_rate": "₱50 base for 3km, ₱10 per additional km, capped at ₱150 per shop",
                     "customer_coordinates_source": coord_source if customer_lat else None,
                     "customer_latitude": customer_lat,
                     "customer_longitude": customer_lng,
-                    "per_shop_delivery_fees": per_shop_delivery_fees  # NEW: Send per-shop breakdown to frontend
+                    "per_shop_delivery_fees": per_shop_delivery_fees
                 },
                 "available_vouchers": available_vouchers,
                 "user_purchase_stats": user_purchase_history,
@@ -27763,7 +27631,6 @@ class CheckoutOrder(viewsets.ViewSet):
             logger.error(f"Error in get_checkout_items: {str(e)}")
             import traceback
             traceback.print_exc()
-            print(f"[ERROR] {str(e)}")
             return Response(
                 {"error": "Internal server error", "details": str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -27815,14 +27682,12 @@ class CheckoutOrder(viewsets.ViewSet):
             return "new"
 
     def _get_simple_available_vouchers(self, shop_ids, user_id, current_subtotal, user_purchase_history):
-        """Get available vouchers with proper checks for validity, minimum spend, and usage limits"""
         if not shop_ids:
             return []
 
         current_date = timezone.now().date()
 
         try:
-            # Base query: active, within date range, meets minimum spend
             vouchers = Voucher.objects.filter(
                 shop_id__in=shop_ids,
                 is_active=True,
@@ -27834,7 +27699,6 @@ class CheckoutOrder(viewsets.ViewSet):
                 'minimum_spend', 'maximum_usage', 'shop__name', 'shop__id', 'voucher_type'
             ).order_by('-value')[:10]
 
-            # Also get general vouchers (no shop)
             general_vouchers = Voucher.objects.filter(
                 shop__isnull=True,
                 is_active=True,
@@ -27846,32 +27710,26 @@ class CheckoutOrder(viewsets.ViewSet):
                 'minimum_spend', 'maximum_usage', 'shop__name', 'shop__id', 'voucher_type'
             ).order_by('-value')[:5]
 
-            # Combine and deduplicate by id
             all_vouchers = list(vouchers) + list(general_vouchers)
             unique_vouchers = {v.id: v for v in all_vouchers}.values()
 
             voucher_list = []
             for voucher in unique_vouchers:
-                # Check if user has already used this voucher
                 user = User.objects.filter(id=user_id).first()
                 user_has_used = False
                 if user:
                     user_has_used = UserVoucherUsage.objects.filter(user=user, voucher=voucher).exists()
                 
-                # Skip if user has already used this voucher
                 if user_has_used:
                     continue
                 
-                # Check global usage count - only include if maximum_usage is not reached
                 total_usage_count = UserVoucherUsage.objects.filter(voucher=voucher).count()
                 
-                # Skip if maximum usage reached (0 means unlimited)
                 if voucher.maximum_usage > 0 and total_usage_count >= voucher.maximum_usage:
                     continue
                 
                 potential_savings = self._calculate_discount(voucher, Decimal(str(current_subtotal)))
                 
-                # Get remaining usage
                 remaining_usage = None
                 if voucher.maximum_usage > 0:
                     remaining_usage = voucher.maximum_usage - total_usage_count
@@ -27898,7 +27756,6 @@ class CheckoutOrder(viewsets.ViewSet):
                 voucher_list.append(voucher_data)
 
             if voucher_list:
-                # Group by shop for better organization
                 grouped = {}
                 for v in voucher_list:
                     shop_key = v['shop_name']
@@ -28080,7 +27937,6 @@ class CheckoutOrder(viewsets.ViewSet):
                         "error": "Invalid voucher code or voucher not applicable"
                     }, status=status.HTTP_404_NOT_FOUND)
 
-            # Check if user has already used this voucher
             user = User.objects.get(id=user_id)
             user_has_used = UserVoucherUsage.objects.filter(user=user, voucher=voucher).exists()
             
@@ -28090,7 +27946,6 @@ class CheckoutOrder(viewsets.ViewSet):
                     "error": "You have already used this voucher. Each voucher can only be used once per user."
                 }, status=status.HTTP_400_BAD_REQUEST)
 
-            # Check global usage count
             total_usage_count = UserVoucherUsage.objects.filter(voucher=voucher).count()
             
             if voucher.maximum_usage > 0 and total_usage_count >= voucher.maximum_usage:
@@ -28161,27 +28016,7 @@ class CheckoutOrder(viewsets.ViewSet):
         voucher_id = request.data.get("voucher_id")
         remarks = request.data.get("remarks")
         pickup_date = request.data.get("pickup_date")
-        # NEW: Get delivery fees breakdown from frontend
         delivery_fees_breakdown = request.data.get("delivery_fees_breakdown", {})
-
-        # ─── LOGGING: Print the entire request body ───────────────────────────────
-        print("=" * 80)
-        print("[CREATE_ORDER] ===== RECEIVED REQUEST =====")
-        print(f"[CREATE_ORDER] User ID: {user_id}")
-        print(f"[CREATE_ORDER] Selected IDs: {selected_ids}")
-        print(f"[CREATE_ORDER] Cart ID: {cart_id}")
-        print(f"[CREATE_ORDER] Product ID: {product_id}")
-        print(f"[CREATE_ORDER] Variant ID: {variant_id}")
-        print(f"[CREATE_ORDER] Quantity: {quantity}")
-        print(f"[CREATE_ORDER] Payment Method: {payment_method}")
-        print(f"[CREATE_ORDER] Shipping Method: {shipping_method}")
-        print(f"[CREATE_ORDER] Shipping Address ID: {shipping_address_id}")
-        print(f"[CREATE_ORDER] Voucher ID: {voucher_id}")
-        print(f"[CREATE_ORDER] Remarks: {remarks}")
-        print(f"[CREATE_ORDER] Pickup Date: {pickup_date}")
-        print(f"[CREATE_ORDER] Delivery Fees Breakdown from Frontend: {delivery_fees_breakdown}")
-        print(f"[CREATE_ORDER] Type of delivery_fees_breakdown: {type(delivery_fees_breakdown)}")
-        print("=" * 80)
 
         if not user_id:
             return Response(
@@ -28190,7 +28025,6 @@ class CheckoutOrder(viewsets.ViewSet):
             )
 
         try:
-            from decimal import Decimal, ROUND_HALF_UP
             user = get_object_or_404(User, id=user_id)
 
             shipping_address = None
@@ -28369,30 +28203,18 @@ class CheckoutOrder(viewsets.ViewSet):
                         status=status.HTTP_400_BAD_REQUEST
                     )
 
-            # Calculate per-shop delivery fees - USE FRONTEND-PROVIDED FEES
             shipping_fees_breakdown = {}
             shops_distances = {}
             total_delivery_fee = Decimal('0')
             
-            print(f"[CREATE_ORDER] Processing delivery fees for shipping_method: {shipping_method.lower()}")
-            
             if shipping_method.lower() == "standard delivery" and shipping_address:
-                print(f"[CREATE_ORDER] Delivery fees breakdown from frontend: {delivery_fees_breakdown}")
-                print(f"[CREATE_ORDER] Type: {type(delivery_fees_breakdown)}")
-                print(f"[CREATE_ORDER] Keys: {delivery_fees_breakdown.keys() if isinstance(delivery_fees_breakdown, dict) else 'Not a dict'}")
-                
                 if delivery_fees_breakdown and isinstance(delivery_fees_breakdown, dict):
-                    # Use pre-calculated fees from frontend
-                    print(f"[CREATE_ORDER] ✅ Using frontend-provided delivery fees")
                     for shop_id, fee in delivery_fees_breakdown.items():
-                        print(f"[CREATE_ORDER] Processing shop {shop_id} with fee {fee}")
                         fee_decimal = Decimal(str(fee)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
                         shipping_fees_breakdown[shop_id] = float(fee_decimal)
                         total_delivery_fee += fee_decimal
                         
-                        # Try to get shop info for response (optional)
                         try:
-                            from api.models import Shop
                             shop = Shop.objects.filter(id=shop_id).first()
                             if shop:
                                 shops_distances[shop_id] = {
@@ -28401,17 +28223,9 @@ class CheckoutOrder(viewsets.ViewSet):
                                     'shop_name': shop.name,
                                     'shop_address': f"{shop.street}, {shop.barangay}, {shop.city}, {shop.province}"
                                 }
-                                print(f"[CREATE_ORDER] Found shop: {shop.name}")
-                        except Exception as e:
-                            print(f"[CREATE_ORDER] Error finding shop {shop_id}: {e}")
+                        except Exception:
                             pass
-                    
-                    print(f"[CREATE_ORDER] Using frontend delivery fees: {shipping_fees_breakdown}")
-                    print(f"[CREATE_ORDER] Total delivery fee: {total_delivery_fee}")
                 else:
-                    # Fallback: recalculate
-                    print(f"[CREATE_ORDER] ⚠️ No frontend fees provided or invalid format, recalculating...")
-                    print(f"[CREATE_ORDER] delivery_fees_breakdown value: {delivery_fees_breakdown}")
                     customer_lat, customer_lng, _ = self._get_customer_coordinates(user_id, shipping_address_id)
                     
                     if customer_lat and customer_lng:
@@ -28433,7 +28247,6 @@ class CheckoutOrder(viewsets.ViewSet):
                                 }
                                 shipping_fees_breakdown[shop_id] = float(fee)
                                 total_delivery_fee += fee
-                                print(f"[CREATE_ORDER] Recalculated fee for {shop.name}: {fee}")
                         else:
                             for cart_item in cart_items:
                                 if cart_item.product and cart_item.product.shop:
@@ -28454,25 +28267,13 @@ class CheckoutOrder(viewsets.ViewSet):
                                         }
                                         shipping_fees_breakdown[shop_id] = float(fee)
                                         total_delivery_fee += fee
-                                        print(f"[CREATE_ORDER] Recalculated fee for {shop.name}: {fee}")
-            else:
-                print(f"[CREATE_ORDER] Not standard delivery or no shipping address. Shipping method: {shipping_method}")
             
-            print(f"[CREATE_ORDER] Final shipping_fees_breakdown: {shipping_fees_breakdown}")
-            print(f"[CREATE_ORDER] Final total_delivery_fee: {total_delivery_fee}")
-            
-            # Calculate base total (subtotal + total_delivery_fee - discount_amount)
             base_total = subtotal + total_delivery_fee - discount_amount
-            
-            # Calculate transaction fee for ALL payment methods (5% capped at ₱50)
             transaction_fee = self._calculate_transaction_fee(base_total, payment_method)
-            
-            # Final total including transaction fee
             total_amount = base_total + transaction_fee
 
             initial_status = 'pending'
             
-            # Create order with shipping_fees_breakdown
             order = Order.objects.create(
                 user=user,
                 shipping_address=shipping_address,
@@ -28486,17 +28287,15 @@ class CheckoutOrder(viewsets.ViewSet):
                 metadata={}
             )
             
-            # Store transaction fee in metadata for reference
             if transaction_fee > 0:
                 order.metadata['transaction_fee'] = float(transaction_fee)
                 order.metadata['transaction_fee_percentage'] = 5
                 order.metadata['transaction_fee_cap'] = 50
                 order.metadata['transaction_fee_note'] = f"Transaction fee of ₱{float(transaction_fee):.2f} (5% capped at ₱50) applied for {payment_method} payment"
             
-            # Store delivery fee info in metadata
             if total_delivery_fee > 0:
                 order.metadata['total_delivery_fee'] = float(total_delivery_fee)
-                order.metadata['delivery_fee_note'] = f"Total delivery fee of ₱{float(total_delivery_fee):.2f} (₱40/km capped at ₱300 per shop)"
+                order.metadata['delivery_fee_note'] = f"Total delivery fee of ₱{float(total_delivery_fee):.2f} (₱50 base for 3km, ₱10 per additional km, capped at ₱150 per shop)"
                 order.metadata['delivery_fees_by_shop'] = shipping_fees_breakdown
             
             if shipping_method.lower() == "pickup" and 'cash' in payment_method.lower() and pickup_date:
@@ -28511,7 +28310,6 @@ class CheckoutOrder(viewsets.ViewSet):
                 unit_price = Decimal(str(direct_variant.price)) if direct_variant.price else Decimal('0')
                 checkout_total = unit_price * direct_quantity
                 
-                # Get shipping fee for this shop from the breakdown
                 shop_id = str(direct_product.shop.id) if direct_product.shop else None
                 item_shipping_fee = Decimal(str(shipping_fees_breakdown.get(shop_id, 0))) if shop_id else Decimal('0')
                 item_shipping_fee = item_shipping_fee.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
@@ -28577,7 +28375,6 @@ class CheckoutOrder(viewsets.ViewSet):
 
                     checkout_total = unit_price * cart_item.quantity
                     
-                    # Get shipping fee for this item's shop from the breakdown
                     shop_id = str(cart_item.product.shop.id) if cart_item.product and cart_item.product.shop else None
                     item_shipping_fee = Decimal(str(shipping_fees_breakdown.get(shop_id, 0))) if shop_id else Decimal('0')
                     item_shipping_fee = item_shipping_fee.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
@@ -28597,7 +28394,6 @@ class CheckoutOrder(viewsets.ViewSet):
 
                     cart_item_ids.append(str(cart_item.id))
                     
-                    # Get product image using storage utility
                     product_image_url = None
                     if cart_item.variant and cart_item.variant.image:
                         try:
@@ -28633,7 +28429,6 @@ class CheckoutOrder(viewsets.ViewSet):
                         "is_refundable": cart_item.variant.is_refundable if cart_item.variant else getattr(cart_item.product, 'is_refundable', False)
                     })
 
-            # Create payment record for ALL payment methods
             Payment.objects.create(
                 order=order,
                 amount=total_amount,
@@ -28641,7 +28436,6 @@ class CheckoutOrder(viewsets.ViewSet):
                 status='pending'
             )
 
-            # Record voucher usage if voucher was applied
             if voucher:
                 UserVoucherUsage.objects.create(
                     user=user,
@@ -28650,10 +28444,8 @@ class CheckoutOrder(viewsets.ViewSet):
                     discount_amount=discount_amount
                 )
 
-            # Decrease stock for the order items
             self._decrease_stock_for_order(order)
 
-            # Build breakdown message for response
             breakdown_message = ""
             if shipping_fees_breakdown:
                 breakdown_parts = []
@@ -28690,14 +28482,8 @@ class CheckoutOrder(viewsets.ViewSet):
                 "shipping_method": shipping_method,
                 "pickup_date": pickup_date if shipping_method.lower() == "pickup" and 'cash' in payment_method.lower() else None,
                 "transaction_fee_note": f"Transaction fee of ₱{float(transaction_fee):.2f} (5% capped at ₱50) applied for {payment_method} payment",
-                "delivery_fee_note": f"Total delivery fee of ₱{float(total_delivery_fee):.2f} (₱40/km capped at ₱300 per shop). Breakdown: {breakdown_message}" if total_delivery_fee > 0 else None
+                "delivery_fee_note": f"Total delivery fee of ₱{float(total_delivery_fee):.2f} (₱50 base for 3km, ₱10 per additional km, capped at ₱150 per shop). Breakdown: {breakdown_message}" if total_delivery_fee > 0 else None
             }
-            
-            # Log the actual stored fees for debugging
-            print(f"[CREATE_ORDER] ===== FINAL STORED VALUES =====")
-            print(f"[CREATE_ORDER] shipping_fees_breakdown: {shipping_fees_breakdown}")
-            print(f"[CREATE_ORDER] total_delivery_fee: {float(total_delivery_fee)}")
-            print(f"[CREATE_ORDER] ==================================")
             
             return Response(response_data)
 
@@ -28710,8 +28496,6 @@ class CheckoutOrder(viewsets.ViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
-            
-            
     @action(detail=False, methods=['GET'], url_path='get_order_details/(?P<order_id>[^/.]+)')
     def get_order_details(self, request, order_id=None):
         try:
@@ -28740,7 +28524,6 @@ class CheckoutOrder(viewsets.ViewSet):
                 'pickup_date': order.metadata.get('pickup_date') if order.metadata else None
             }
             
-            # Add transaction fee info if present (for ALL payment methods)
             if order.metadata and order.metadata.get('transaction_fee'):
                 order_data['transaction_fee'] = order.metadata['transaction_fee']
                 order_data['transaction_fee_note'] = order.metadata.get('transaction_fee_note', "5% transaction fee capped at ₱50 applied")
@@ -28955,8 +28738,7 @@ class CheckoutOrder(viewsets.ViewSet):
             maya_public_key = settings.MAYA_SANDBOX.get('PUBLIC_KEY', '')
             credentials = base64.b64encode(f"{maya_public_key}:".encode()).decode()
 
-            import requests as http_requests
-            maya_api_response = http_requests.post(
+            maya_api_response = requests.post(
                 f"{settings.MAYA_SANDBOX['BASE_URL']}/payby/v2/paymaya/payments",
                 headers={
                     "Content-Type": "application/json",
@@ -29004,8 +28786,6 @@ class CheckoutOrder(viewsets.ViewSet):
             }, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             logger.error(f"Error initiating Maya payment: {str(e)}")
-            import traceback
-            traceback.print_exc()
             return Response({
                 'success': False,
                 'error': 'Failed to initiate Maya payment',
@@ -29349,12 +29129,12 @@ class CheckoutOrder(viewsets.ViewSet):
                         redirectToApp();
                     }}, 2000);
                     if (window.ReactNativeWebView) {{
-                            window.ReactNativeWebView.postMessage('redirect:{mobile_redirect_url}');
-                        }}
-                    </script>
-                </body>
-                </html>
-                """
+                        window.ReactNativeWebView.postMessage('redirect:{mobile_redirect_url}');
+                    }}
+                </script>
+            </body>
+            </html>
+            """
             return HttpResponse(html_content, content_type='text/html')
 
         frontend_url = getattr(settings, 'FRONTEND_URL')
