@@ -1,6 +1,9 @@
 name: Docker Image CI
 
 on:
+  push:
+    paths:
+      - 'crimsotech_django/**'
   workflow_dispatch:
 
 jobs:
