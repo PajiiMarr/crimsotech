@@ -30823,9 +30823,14 @@ class PurchasesBuyer(viewsets.ViewSet):
             order.save(update_fields=['status', 'completed_at', 'refund_expire_date'])
 
             # Update all OrderShopStatus for this order to 'completed'
+            from django.utils import timezone
+            from datetime import timedelta
+
             OrderShopStatus.objects.filter(order=order).update(
-                status='completed'
+                status='completed',
+                refund_expire_date=timezone.now() + timedelta(days=1)
             )
+
             print(f"✅ [COMPLETE] Order {order.order} marked as completed - all shop statuses set to 'completed'")
 
             delivery = Delivery.objects.filter(order=order).first()
@@ -31265,18 +31270,31 @@ class PurchasesBuyer(viewsets.ViewSet):
             if shop_id:
                 try:
                     from api.models import Shop, OrderShopStatus
+                    from django.utils import timezone
+                    from datetime import timedelta
+                    
                     shop = Shop.objects.get(id=shop_id)
                     order_shop_status, created = OrderShopStatus.objects.get_or_create(
                         order=order,
                         shop=shop,
-                        defaults={'status': 'completed'}
+                        defaults={
+                            'status': 'completed',
+                            'refund_expire_date': timezone.now() + timedelta(days=1)
+                        }
                     )
-                    if not created and order_shop_status.status == 'delivered':
-                        order_shop_status.status = 'completed'
-                        order_shop_status.save(update_fields=['status'])
-                        print(f"✅ OrderShopStatus for {shop.name} updated to 'completed'")
+                    if not created:
+                        if order_shop_status.status == 'delivered':
+                            order_shop_status.status = 'completed'
+                            order_shop_status.refund_expire_date = timezone.now() + timedelta(days=1)
+                            order_shop_status.save(update_fields=['status', 'refund_expire_date'])
+                            print(f"✅ OrderShopStatus for {shop.name} updated to 'completed' with refund_expire_date {order_shop_status.refund_expire_date}")
+                        elif order_shop_status.status != 'completed':
+                            order_shop_status.status = 'completed'
+                            order_shop_status.refund_expire_date = timezone.now() + timedelta(days=1)
+                            order_shop_status.save(update_fields=['status', 'refund_expire_date'])
+                            print(f"✅ OrderShopStatus for {shop.name} updated to 'completed' with refund_expire_date")
                     elif created:
-                        print(f"✅ Created new OrderShopStatus for {shop.name} with status 'completed'")
+                        print(f"✅ Created new OrderShopStatus for {shop.name} with status 'completed' and refund_expire_date {order_shop_status.refund_expire_date}")
                 except Shop.DoesNotExist:
                     print(f"⚠️ Shop {shop_id} not found")
             else:
@@ -32583,6 +32601,7 @@ class RiderOrdersActive(viewsets.ViewSet):
                 "rider_name": f"{delivery.rider.rider.first_name} {delivery.rider.rider.last_name}" if delivery and delivery.rider and delivery.rider.rider else None,
                 "rider_contact": delivery.rider.rider.contact_number if delivery and delivery.rider and delivery.rider.rider else None,
                 "shop_id": delivery_shop_id,
+                "shop_total_amount": str(shop_total_amount),  # ← Shop-specific order amount
                 "picked_at": delivery.picked_at if delivery else None,
                 "delivered_at": delivery.delivered_at if delivery else None,
                 "created_at": delivery.created_at if delivery else None,
@@ -32928,9 +32947,31 @@ class RiderOrdersActive(viewsets.ViewSet):
                 except Exception as e:
                     print(f"Error getting refund amount for return delivery {delivery.id}: {e}")
             else:
-                # For normal deliveries (delivery_type = 'order'), ALWAYS use order.total_amount
-                display_total_amount = float(order.total_amount)
-                print(f"📦 Normal delivery for order {order.order}: showing order total {display_total_amount}")
+                # For normal deliveries - calculate shop-specific subtotal (exclude shipping fee)
+                delivery_shop_id = delivery.metadata.get('shop_id') if delivery.metadata else None
+                
+                if delivery_shop_id:
+                    # Calculate subtotal for this specific shop (NO shipping fee)
+                    shop_subtotal = Decimal('0.00')
+                    checkout_items = Checkout.objects.filter(order=order)
+                    
+                    for item in checkout_items:
+                        item_shop_id = None
+                        if hasattr(item, 'direct_shop_id') and item.direct_shop_id:
+                            item_shop_id = str(item.direct_shop_id)
+                        elif item.cart_item and item.cart_item.product and item.cart_item.product.shop:
+                            item_shop_id = str(item.cart_item.product.shop.id)
+                        
+                        if item_shop_id == delivery_shop_id:
+                            # ONLY add item subtotal, NO shipping fee
+                            shop_subtotal += item.total_amount
+                    
+                    display_total_amount = float(shop_subtotal)
+                    print(f"📦 Normal delivery for order {order.order}: shop {delivery_shop_id} subtotal (no shipping) = {display_total_amount}")
+                else:
+                    # Fallback to full order total if no shop_id
+                    display_total_amount = float(order.total_amount)
+                    print(f"📦 Normal delivery for order {order.order}: showing order total {display_total_amount}")
             
             # Handle null shipping_address
             shipping_address = order.shipping_address

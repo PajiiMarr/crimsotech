@@ -2158,7 +2158,7 @@ export default function CustomerViewProductScreen() {
                       fontWeight: "600",
                     }}
                   >
-                    Refundable ({product.refund_days ?? 0} days)
+                    Refundable 
                   </Text>
                 </View>
               )}

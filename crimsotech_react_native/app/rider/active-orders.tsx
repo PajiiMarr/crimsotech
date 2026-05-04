@@ -508,7 +508,7 @@ export default function ActiveOrders() {
     if (delivery.delivery_type === 'return') {
       return 'Refund Amount';
     }
-    return 'Order Total';
+    return 'Order Subtotal';
   };
 
   const getTabCount = (tabId: string) => {
