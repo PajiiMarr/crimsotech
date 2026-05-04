@@ -127,6 +127,7 @@ interface OrderData {
     metadata?: {
       pickup_code?: string;
     };
+    shop_statuses?: Record<string, string>;
   };
   shipping_info: ShippingInfo;
   delivery_address: DeliveryAddress;
@@ -158,6 +159,7 @@ interface OrderData {
 const formatNumber = (num: number): string => {
   return num.toLocaleString("en-PH");
 };
+
 
 const formatDate = (dateString: string | null) => {
   if (!dateString) return "N/A";
@@ -195,6 +197,8 @@ type ShopItemGroup = {
   shopPicture: string | null;
   items: OrderItem[];
   subtotal: number;
+  shippingFee: number; 
+  total: number;     
 };
 
 const groupItemsByShop = (items: OrderItem[]): ShopItemGroup[] => {
@@ -209,11 +213,14 @@ const groupItemsByShop = (items: OrderItem[]): ShopItemGroup[] => {
     const shopName = item.shop_info?.name || "Unknown Shop";
     const shopPicture = item.shop_info?.picture || null;
     const subtotal = parseFloat(item.subtotal || "0") || 0;
+    const shippingFee = parseFloat(item.shipping_fee || "0") || 0;
 
     const existing = grouped.get(shopId);
     if (existing) {
       existing.items.push(item);
       existing.subtotal += subtotal;
+      existing.shippingFee += shippingFee;
+      existing.total = existing.subtotal + existing.shippingFee;
       return;
     }
 
@@ -224,6 +231,8 @@ const groupItemsByShop = (items: OrderItem[]): ShopItemGroup[] => {
       shopPicture,
       items: [item],
       subtotal,
+      shippingFee,
+      total: subtotal + shippingFee,
     });
   });
 
@@ -232,7 +241,7 @@ const groupItemsByShop = (items: OrderItem[]): ShopItemGroup[] => {
 
 export default function ViewTrackOrderPage() {
   const { user, userRole } = useAuth();
-  const { orderId, checkoutId } = useLocalSearchParams();
+  const { orderId, checkoutId, shopId: filterShopId, shopName: filterShopName } = useLocalSearchParams();
   const [loading, setLoading] = useState(true);
   const [orderData, setOrderData] = useState<OrderData | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -248,6 +257,19 @@ export default function ViewTrackOrderPage() {
   const _lastReviewedFetchKey = useRef<string | null>(null);
   const [cancellingItems, setCancellingItems] = useState(false);
 
+  // Check if we're filtering by a specific shop
+  const isFilteringByShop = !!filterShopId;
+  // Calculate shop-specific totals when filtering by shop
+  const currentItems = orderData?.items || [];
+  const shopSpecificSubtotal = isFilteringByShop
+    ? currentItems.reduce((sum, item) => sum + parseFloat(item.subtotal || "0"), 0)
+    : 0;
+
+  const shopSpecificShippingFee = isFilteringByShop
+    ? currentItems.reduce((sum, item) => sum + parseFloat(item.shipping_fee || "0"), 0)
+    : 0;
+
+  const shopSpecificTotal = shopSpecificSubtotal + shopSpecificShippingFee;
   const getReviewedMapKey = (productId: string) =>
     `${orderId || "unknown-order"}:${productId}`;
 
@@ -257,7 +279,7 @@ export default function ViewTrackOrderPage() {
       _lastReviewedFetchKey.current = null;
       fetchOrderData();
     }
-  }, [user?.id, orderId, checkoutId]);
+  }, [user?.id, orderId, checkoutId, filterShopId]);
 
   const fetchOrderData = async (skipLoading = false) => {
     if (!user?.id || !orderId) {
@@ -277,7 +299,7 @@ export default function ViewTrackOrderPage() {
       );
 
       if (response.data) {
-        const data = response.data as any;
+        let data = response.data as any;
 
         data.items = Array.isArray(data.items)
           ? data.items.map((item: any) => ({
@@ -317,6 +339,13 @@ export default function ViewTrackOrderPage() {
               return_deadline: item.return_deadline ?? null,
             }))
           : [];
+
+        // Filter items by shop ID if provided
+        if (filterShopId && data.items) {
+          data.items = data.items.filter(
+            (item: OrderItem) => item.shop_info?.id === filterShopId
+          );
+        }
 
         data.timeline = Array.isArray(data.timeline) ? data.timeline : [];
 
@@ -396,6 +425,14 @@ export default function ViewTrackOrderPage() {
 
         if (!data.order.pickup_expire_date && data.order.pickup_date) {
           data.order.pickup_expire_date = data.order.pickup_date;
+        }
+
+        // Update order status to shop-specific status if filtering by shop
+        if (filterShopId && data.order.shop_statuses?.[filterShopId as string]) {
+          data.order.status = data.order.shop_statuses[filterShopId as string];
+          data.order.status_display = 
+            data.order.status.charAt(0).toUpperCase() + 
+            data.order.status.slice(1).replace(/_/g, " ");
         }
 
         setOrderData(data);
@@ -866,44 +903,64 @@ export default function ViewTrackOrderPage() {
 
   const handleOrderReceived = async () => {
     if (!orderId || !user?.id) return;
-
+    
+    // Determine if we're updating a specific shop or the entire order
+    const isShopSpecific = isFilteringByShop && filterShopId;
+    const shopId = isShopSpecific ? filterShopId : null;
+    
     Alert.alert(
       "Confirm Order Received",
-      "Have you received your order? This will mark the order as completed.",
+      isShopSpecific 
+        ? `Have you received this order from ${filterShopName}? This will mark it as completed.`
+        : "Have you received your order? This will mark the order as completed.",
       [
         { text: "No", style: "cancel" },
         {
           text: "Yes",
           onPress: async () => {
             try {
-              const response = await AxiosInstance.patch(
-                `/purchases-buyer/${orderId}/complete/`,
-                {},
-                {
-                  headers: {
-                    "X-User-Id": user.id,
+              let response;
+              
+              if (isShopSpecific && shopId) {
+                // Update specific shop status using complete-shop-item endpoint
+                // Find the checkout_id for this shop
+                const shopCheckout = orderData?.items.find(item => item.shop_info?.id === shopId);
+                if (!shopCheckout) {
+                  Alert.alert("Error", "Could not find items for this shop");
+                  return;
+                }
+                
+                response = await AxiosInstance.post(
+                  `/purchases-buyer/${orderId}/complete-shop-item/`,
+                  { 
+                    checkout_id: shopCheckout.checkout_id,
+                    shop_id: shopId 
                   },
-                },
-              );
-
-              if (response.data.success) {
-                Alert.alert(
-                  "Success",
-                  "Order marked as completed successfully",
+                  { headers: { "X-User-Id": user.id } }
                 );
+              } else {
+                // Update entire order (all shops)
+                response = await AxiosInstance.patch(
+                  `/purchases-buyer/${orderId}/complete/`,
+                  {},
+                  { headers: { "X-User-Id": user.id } }
+                );
+              }
+  
+              if (response.data.success) {
+                setCenterToastMessage(
+                  isShopSpecific 
+                    ? `Order from ${filterShopName} marked as completed`
+                    : "Order marked as completed successfully"
+                );
+                setCenterToastVisible(true);
                 fetchOrderData();
               } else {
-                Alert.alert(
-                  "Error",
-                  response.data.message || "Failed to complete order",
-                );
+                Alert.alert("Error", response.data.message || "Failed to complete order");
               }
             } catch (error: any) {
               console.error("Error completing order:", error);
-              Alert.alert(
-                "Error",
-                error.response?.data?.message || "Failed to complete order",
-              );
+              Alert.alert("Error", error.response?.data?.message || "Failed to complete order");
             }
           },
         },
@@ -948,7 +1005,12 @@ export default function ViewTrackOrderPage() {
   const renderRiderInfo = () => {
     if (orderData?.order?.status !== "delivered") return null;
     if (!orderData?.order?.delivery_rider) return null;
-
+  
+    // Get rider contact number from available data: prefer delivery_rider_phone if present,
+    // otherwise fall back to the delivery address phone number.
+    // Use a cast to any when accessing a possibly-missing backend field to avoid TS errors.
+    const riderPhone = (orderData?.order as any)?.delivery_rider_phone || orderData?.delivery_address?.phone_number || null;
+  
     return (
       <View style={styles.infoCard}>
         <View style={styles.cardHeader}>
@@ -962,6 +1024,14 @@ export default function ViewTrackOrderPage() {
               {orderData.order.delivery_rider}
             </Text>
           </View>
+          {riderPhone && (
+            <View style={styles.riderInfoRow}>
+              <Ionicons name="call-outline" size={16} color="#6B7280" />
+              <Text style={styles.riderPhone}>
+                {riderPhone}
+              </Text>
+            </View>
+          )}
         </View>
       </View>
     );
@@ -1672,7 +1742,11 @@ export default function ViewTrackOrderPage() {
 
   const orderStatusLower = String(order?.status || "").toLowerCase();
 
-  const groupedItemsByShop = groupItemsByShop(items);
+  // If filtering by shop, we don't need to group items - just show them directly
+  // But we'll still use grouping to maintain the shop header if needed
+  const groupedItemsByShop = !isFilteringByShop ? groupItemsByShop(items) : [];
+  const isSingleShop = isFilteringByShop || groupedItemsByShop.length === 1;
+  const currentShopName = isFilteringByShop ? filterShopName : (groupedItemsByShop[0]?.shopName || null);
 
   const hasActions = () => {
     return (
@@ -1706,7 +1780,9 @@ export default function ViewTrackOrderPage() {
           <TouchableOpacity onPress={() => router.back()}>
             <Ionicons name="arrow-back" size={24} color="black" />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Order Detail</Text>
+          <Text style={styles.headerTitle}>
+            {isFilteringByShop ? `Order from ${filterShopName}` : "Order Detail"}
+          </Text>
           <View style={styles.headerIcons}>
             <TouchableOpacity></TouchableOpacity>
           </View>
@@ -2271,7 +2347,7 @@ export default function ViewTrackOrderPage() {
         )}
 
         {/* Order Timeline */}
-        {timeline.length > 0 && (
+        {/* {timeline.length > 0 && (
           <View style={styles.infoCard}>
             <View style={styles.cardHeader}>
               <MaterialIcons name="timeline" size={20} color="#111827" />
@@ -2305,302 +2381,497 @@ export default function ViewTrackOrderPage() {
               ))}
             </View>
           </View>
-        )}
+        )} */}
 
-        {/* Product Cards grouped by shop */}
-        <View style={styles.shopGroupsContainer}>
+        {/* Product Cards - When filtering by shop, show on ly that shop's items */}
+        {isFilteringByShop ? (
+          // Single shop view - show items directly without shop grouping header
           <View style={styles.infoCard}>
             <View style={styles.cardHeader}>
               <MaterialIcons name="storefront" size={20} color="#111827" />
-              <Text style={styles.cardTitle}>
-                Shops in this order ({groupedItemsByShop.length})
-              </Text>
+              <Text style={styles.cardTitle}>Items from {filterShopName}</Text>
             </View>
 
-            {groupedItemsByShop.map((group) => (
-              <View key={group.key} style={styles.shopGroupCard}>
-                <TouchableOpacity
-                  style={styles.storeHeader}
-                  activeOpacity={0.7}
-                  onPress={() =>
-                    router.push({
-                      pathname: "/customer/view-shop",
-                      params: { shopId: group.shopId },
-                    })
-                  }
+            <View style={styles.groupItemsContainer}>
+              {items.map((item) => (
+                <View
+                  key={item.checkout_id}
+                  style={[
+                    styles.groupItemRow,
+                    item.shop_status === "cancelled" &&
+                      styles.cancelledProductCard,
+                  ]}
                 >
-                  {group.shopPicture ? (
-                    <Image
-                      source={{ uri: group.shopPicture }}
-                      style={styles.storeLogo}
-                    />
-                  ) : (
-                    <View style={styles.storeLogo}>
-                      <Text style={styles.logoText}>
-                        {group.shopName.substring(0, 2).toUpperCase()}
-                      </Text>
-                    </View>
-                  )}
-
-                  <View style={styles.storeInfo}>
-                    <View style={styles.storeTitleRow}>
-                      <Text style={styles.storeName} numberOfLines={1}>
-                        {group.shopName}
-                      </Text>
-                      <Ionicons
-                        name="chevron-forward"
-                        size={16}
-                        color="#9CA3AF"
-                      />
-                    </View>
-                    <Text style={styles.followerText}>
-                      {group.items.length} item
-                      {group.items.length > 1 ? "s" : ""} • Shop total{" "}
-                      {formatCurrency(group.subtotal.toString())}
-                    </Text>
-                  </View>
-                </TouchableOpacity>
-
-                <View style={styles.groupItemsContainer}>
-                  {group.items.map((item) => (
-                    <View
-                      key={item.checkout_id}
+                  <Image
+                    source={{
+                      uri:
+                        item.primary_image?.url ||
+                        "https://via.placeholder.com/80",
+                    }}
+                    style={[
+                      styles.groupItemImage,
+                      item.shop_status === "cancelled" && styles.cancelledImage,
+                    ]}
+                  />
+                  <View style={styles.groupItemDetails}>
+                    <Text
                       style={[
-                        styles.groupItemRow,
-                        item.shop_status === "cancelled" &&
-                          styles.cancelledProductCard,
+                        styles.groupItemName,
+                        item.shop_status === "cancelled" && styles.cancelledText,
+                      ]}
+                      numberOfLines={2}
+                    >
+                      {item.product_name}
+                    </Text>
+                    <Text
+                      style={[
+                        styles.groupItemMeta,
+                        item.shop_status === "cancelled" && styles.cancelledText,
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {item.product_variant}
+                    </Text>
+                    <Text
+                      style={[
+                        styles.groupItemMeta,
+                        item.shop_status === "cancelled" && styles.cancelledText,
                       ]}
                     >
-                      <Image
-                        source={{
-                          uri:
-                            item.primary_image?.url ||
-                            "https://via.placeholder.com/80",
-                        }}
-                        style={[
-                          styles.groupItemImage,
-                          item.shop_status === "cancelled" &&
-                            styles.cancelledImage,
-                        ]}
-                      />
-                      <View style={styles.groupItemDetails}>
-                        <Text
-                          style={[
-                            styles.groupItemName,
-                            item.shop_status === "cancelled" &&
-                              styles.cancelledText,
-                          ]}
-                          numberOfLines={2}
-                        >
-                          {item.product_name}
-                        </Text>
-                        <Text
-                          style={[
-                            styles.groupItemMeta,
-                            item.shop_status === "cancelled" &&
-                              styles.cancelledText,
-                          ]}
-                          numberOfLines={1}
-                        >
-                          {item.product_variant}
-                        </Text>
-                        <Text
-                          style={[
-                            styles.groupItemMeta,
-                            item.shop_status === "cancelled" &&
-                              styles.cancelledText,
-                          ]}
-                        >
-                          Quantity: {formatNumber(item.quantity)}
-                        </Text>
+                      Quantity: {formatNumber(item.quantity)}
+                    </Text>
 
-                        {/* USE shop_status for display - this is the per-shop status from OrderShopStatus */}
-                        {item.shop_status && (
+                    {/* USE shop_status for display - this is the per-shop status from OrderShopStatus */}
+                    {item.shop_status && (
+                      <Text
+                        style={[
+                          styles.groupItemStatus,
+                          item.shop_status === "delivered" && {
+                            color: "#10B981",
+                          },
+                          item.shop_status === "completed" && {
+                            color: "#10B981",
+                          },
+                          item.shop_status === "shipped" && {
+                            color: "#3B82F6",
+                          },
+                          item.shop_status === "ready" && {
+                            color: "#3B82F6",
+                          },
+                          item.shop_status === "to_deliver" && {
+                            color: "#8B5CF6",
+                          },
+                          item.shop_status === "rider_assigned" && {
+                            color: "#8B5CF6",
+                          },
+                          item.shop_status === "pending" && {
+                            color: "#F59E0B",
+                          },
+                          item.shop_status === "processing" && {
+                            color: "#F59E0B",
+                          },
+                          item.shop_status === "confirmed" && {
+                            color: "#10B981",
+                          },
+                          item.shop_status === "cancelled" && {
+                            color: "#EF4444",
+                          },
+                        ]}
+                      >
+                        Status:{" "}
+                        {item.shop_status.charAt(0).toUpperCase() +
+                          item.shop_status.slice(1).replace(/_/g, " ")}
+                      </Text>
+                    )}
+
+                    {/* Action Buttons - only show when shop_status is delivered or completed */}
+                   {/* Return/Refund Button - only */}
+{item.can_return && item.is_refundable && (
+  <TouchableOpacity
+    style={styles.returnItemButton}
+    onPress={() =>
+      handleReturnItem(
+        item.checkout_id,
+        item.product_name,
+      )
+    }
+  >
+    <MaterialIcons
+      name="receipt"
+      size={14}
+      color="#EF4444"
+    />
+    <Text style={styles.returnItemButtonText}>
+      Request Return/Refund
+    </Text>
+  </TouchableOpacity>
+)}
+                  </View>
+                  <View style={styles.groupItemPriceContainer}>
+                    <Text
+                      style={[
+                        styles.currentPrice,
+                        item.shop_status === "cancelled" &&
+                          styles.cancelledPrice,
+                      ]}
+                    >
+                      {formatCurrency(item.price)}
+                    </Text>
+                    <Text
+                      style={[
+                        styles.groupItemSubtotal,
+                        item.shop_status === "cancelled" && styles.cancelledText,
+                      ]}
+                    >
+                      Subtotal: {formatCurrency(item.subtotal)}
+                    </Text>
+                  </View>
+                </View>
+              ))}
+            </View>
+          </View>
+        ) : (
+          // Multi-shop view - show shops grouped
+          <View style={styles.shopGroupsContainer}>
+            <View style={styles.infoCard}>
+              <View style={styles.cardHeader}>
+                <MaterialIcons name="storefront" size={20} color="#111827" />
+                <Text style={styles.cardTitle}>
+                  Shops in this order ({groupedItemsByShop.length})
+                </Text>
+              </View>
+
+              {groupedItemsByShop.map((group) => (
+                <View key={group.key} style={styles.shopGroupCard}>
+                  <TouchableOpacity
+                    style={styles.storeHeader}
+                    activeOpacity={0.7}
+                    onPress={() =>
+                      router.push({
+                        pathname: "/customer/view-shop",
+                        params: { shopId: group.shopId },
+                      })
+                    }
+                  >
+                    {group.shopPicture ? (
+                      <Image
+                        source={{ uri: group.shopPicture }}
+                        style={styles.storeLogo}
+                      />
+                    ) : (
+                      <View style={styles.storeLogo}>
+                        <Text style={styles.logoText}>
+                          {group.shopName.substring(0, 2).toUpperCase()}
+                        </Text>
+                      </View>
+                    )}
+
+                    <View style={styles.storeInfo}>
+                      <View style={styles.storeTitleRow}>
+                        <Text style={styles.storeName} numberOfLines={1}>
+                          {group.shopName}
+                        </Text>
+                        <Ionicons
+                          name="chevron-forward"
+                          size={16}
+                          color="#9CA3AF"
+                        />
+                      </View>
+                      <Text style={styles.followerText}>
+                        {group.items.length} item
+                        {group.items.length > 1 ? "s" : ""} • Subtotal: {formatCurrency(group.subtotal.toString())}
+                      </Text>
+                      <Text style={styles.followerText}>
+                        Shipping: {formatCurrency(group.shippingFee.toString())} • Total: {formatCurrency(group.total.toString())}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+
+                  <View style={styles.groupItemsContainer}>
+                    {group.items.map((item) => (
+                      <View
+                        key={item.checkout_id}
+                        style={[
+                          styles.groupItemRow,
+                          item.shop_status === "cancelled" &&
+                            styles.cancelledProductCard,
+                        ]}
+                      >
+                        <Image
+                          source={{
+                            uri:
+                              item.primary_image?.url ||
+                              "https://via.placeholder.com/80",
+                          }}
+                          style={[
+                            styles.groupItemImage,
+                            item.shop_status === "cancelled" &&
+                              styles.cancelledImage,
+                          ]}
+                        />
+                        <View style={styles.groupItemDetails}>
                           <Text
                             style={[
-                              styles.groupItemStatus,
-                              item.shop_status === "delivered" && {
-                                color: "#10B981",
-                              },
-                              item.shop_status === "completed" && {
-                                color: "#10B981",
-                              },
-                              item.shop_status === "shipped" && {
-                                color: "#3B82F6",
-                              },
-                              item.shop_status === "ready" && {
-                                color: "#3B82F6",
-                              },
-                              item.shop_status === "to_deliver" && {
-                                color: "#8B5CF6",
-                              },
-                              item.shop_status === "rider_assigned" && {
-                                color: "#8B5CF6",
-                              },
-                              item.shop_status === "pending" && {
-                                color: "#F59E0B",
-                              },
-                              item.shop_status === "processing" && {
-                                color: "#F59E0B",
-                              },
-                              item.shop_status === "confirmed" && {
-                                color: "#10B981",
-                              },
-                              item.shop_status === "cancelled" && {
-                                color: "#EF4444",
-                              },
+                              styles.groupItemName,
+                              item.shop_status === "cancelled" &&
+                                styles.cancelledText,
+                            ]}
+                            numberOfLines={2}
+                          >
+                            {item.product_name}
+                          </Text>
+                          <Text
+                            style={[
+                              styles.groupItemMeta,
+                              item.shop_status === "cancelled" &&
+                                styles.cancelledText,
+                            ]}
+                            numberOfLines={1}
+                          >
+                            {item.product_variant}
+                          </Text>
+                          <Text
+                            style={[
+                              styles.groupItemMeta,
+                              item.shop_status === "cancelled" &&
+                                styles.cancelledText,
                             ]}
                           >
-                            Status:{" "}
-                            {item.shop_status.charAt(0).toUpperCase() +
-                              item.shop_status.slice(1).replace(/_/g, " ")}
+                            Quantity: {formatNumber(item.quantity)}
                           </Text>
-                        )}
 
-                        {/* Action Buttons - only show when shop_status is delivered or completed */}
-                        {(item.shop_status === "delivered" ||
-                          item.shop_status === "completed") && (
-                          <View style={styles.itemActionButtonsContainer}>
-                            {/* Mark as Received Button - For delivered items that aren't completed yet */}
-                            {(item.shop_status === "delivered" || item.item_status === "delivered") && (
-                              <TouchableOpacity
-                                style={styles.receiveItemButton}
-                                onPress={() =>
-                                  handleReceiveItem(
-                                    item.checkout_id,
-                                    item.shop_info?.id,
-                                  )
-                                }
-                              >
-                                <MaterialIcons
-                                  name="check-circle"
-                                  size={14}
-                                  color="#FFFFFF"
-                                />
-                                <Text style={styles.receiveItemButtonText}>
-                                  Mark as Received
-                                </Text>
-                              </TouchableOpacity>
-                            )}
+                          {/* USE shop_status for display - this is the per-shop status from OrderShopStatus */}
+                          {item.shop_status && (
+                            <Text
+                              style={[
+                                styles.groupItemStatus,
+                                item.shop_status === "delivered" && {
+                                  color: "#10B981",
+                                },
+                                item.shop_status === "completed" && {
+                                  color: "#10B981",
+                                },
+                                item.shop_status === "shipped" && {
+                                  color: "#3B82F6",
+                                },
+                                item.shop_status === "ready" && {
+                                  color: "#3B82F6",
+                                },
+                                item.shop_status === "to_deliver" && {
+                                  color: "#8B5CF6",
+                                },
+                                item.shop_status === "rider_assigned" && {
+                                  color: "#8B5CF6",
+                                },
+                                item.shop_status === "pending" && {
+                                  color: "#F59E0B",
+                                },
+                                item.shop_status === "processing" && {
+                                  color: "#F59E0B",
+                                },
+                                item.shop_status === "confirmed" && {
+                                  color: "#10B981",
+                                },
+                                item.shop_status === "cancelled" && {
+                                  color: "#EF4444",
+                                },
+                              ]}
+                            >
+                              Status:{" "}
+                              {item.shop_status.charAt(0).toUpperCase() +
+                                item.shop_status.slice(1).replace(/_/g, " ")}
+                            </Text>
+                          )}
 
-                            {/* Return/Refund Button */}
-                            {item.can_return && item.is_refundable && (
-                              <TouchableOpacity
-                                style={styles.returnItemButton}
-                                onPress={() =>
-                                  handleReturnItem(
-                                    item.checkout_id,
-                                    item.product_name,
-                                  )
-                                }
-                              >
-                                <MaterialIcons
-                                  name="receipt"
-                                  size={14}
-                                  color="#EF4444"
-                                />
-                                <Text style={styles.returnItemButtonText}>
-                                  Return/Refund
-                                </Text>
-                              </TouchableOpacity>
-                            )}
+                          {/* Action Buttons - only show when shop_status is delivered or completed */}
+                          {(item.shop_status === "delivered" ||
+                            item.shop_status === "completed") && (
+                            <View style={styles.itemActionButtonsContainer}>
+                              {/* Mark as Received Button - For delivered items that aren't completed yet */}
+                              {(item.shop_status === "delivered" || item.item_status === "delivered") && (
+                                <TouchableOpacity
+                                  style={styles.receiveItemButton}
+                                  onPress={() =>
+                                    handleReceiveItem(
+                                      item.checkout_id,
+                                      item.shop_info?.id,
+                                    )
+                                  }
+                                >
+                                  <MaterialIcons
+                                    name="check-circle"
+                                    size={14}
+                                    color="#FFFFFF"
+                                  />
+                                  <Text style={styles.receiveItemButtonText}>
+                                    Mark as Received
+                                  </Text>
+                                </TouchableOpacity>
+                              )}
 
-                            {/* Rate Button */}
-                            {item.can_review && (
-                              <TouchableOpacity
-                                style={styles.rateItemButton}
-                                onPress={() => handleRateItem(item)}
-                              >
-                                <MaterialIcons
-                                  name="star"
-                                  size={14}
-                                  color="#F59E0B"
-                                />
-                                <Text style={styles.rateItemButtonText}>
-                                  Rate Product
-                                </Text>
-                              </TouchableOpacity>
-                            )}
-                          </View>
-                        )}
+                              {/* Return/Refund Button */}
+                              {item.can_return && item.is_refundable && (
+                                <TouchableOpacity
+                                  style={styles.returnItemButton}
+                                  onPress={() =>
+                                    handleReturnItem(
+                                      item.checkout_id,
+                                      item.product_name,
+                                    )
+                                  }
+                                >
+                                  <MaterialIcons
+                                    name="receipt"
+                                    size={14}
+                                    color="#EF4444"
+                                  />
+                                  <Text style={styles.returnItemButtonText}>
+                                    Return/Refund
+                                  </Text>
+                                </TouchableOpacity>
+                              )}
+
+                              {/* Rate Button */}
+                              {item.can_review && (
+                                <TouchableOpacity
+                                  style={styles.rateItemButton}
+                                  onPress={() => handleRateItem(item)}
+                                >
+                                  <MaterialIcons
+                                    name="star"
+                                    size={14}
+                                    color="#F59E0B"
+                                  />
+                                  <Text style={styles.rateItemButtonText}>
+                                    Rate Product
+                                  </Text>
+                                </TouchableOpacity>
+                              )}
+                            </View>
+                          )}
+                        </View>
+                        <View style={styles.groupItemPriceContainer}>
+  <Text
+    style={[
+      styles.currentPrice,
+      item.shop_status === "cancelled" && styles.cancelledPrice,
+    ]}
+  >
+    {formatCurrency(item.price)}
+  </Text>
+  <Text
+    style={[
+      styles.groupItemSubtotal,
+      item.shop_status === "cancelled" && styles.cancelledText,
+    ]}
+  >
+    Subtotal: {formatCurrency(item.subtotal)}
+  </Text>
+  {item.shipping_fee && parseFloat(item.shipping_fee) > 0 && (
+    <Text
+      style={[
+        styles.groupItemSubtotal,
+        item.shop_status === "cancelled" && styles.cancelledText,
+      ]}
+    >
+      Shipping: {formatCurrency(item.shipping_fee)}
+    </Text>
+  )}
+</View>
                       </View>
-                      <View style={styles.groupItemPriceContainer}>
-                        <Text
-                          style={[
-                            styles.currentPrice,
-                            item.shop_status === "cancelled" &&
-                              styles.cancelledPrice,
-                          ]}
-                        >
-                          {formatCurrency(item.price)}
-                        </Text>
-                        <Text
-                          style={[
-                            styles.groupItemSubtotal,
-                            item.shop_status === "cancelled" &&
-                              styles.cancelledText,
-                          ]}
-                        >
-                          Subtotal: {formatCurrency(item.subtotal)}
-                        </Text>
-                      </View>
-                    </View>
-                  ))}
+                    ))}
+                  </View>
+                  <View style={styles.shopTotalRow}>
+      <Text style={styles.shopTotalLabel}>Shop Total:</Text>
+      <Text style={styles.shopTotalValue}>{formatCurrency(group.total.toString())}</Text>
+    </View>
                 </View>
-              </View>
-            ))}
+              ))}
+            </View>
           </View>
-        </View>
+        )}
 
         {/* Order Summary */}
-        <View style={styles.summaryCard}>
-          <Text style={styles.summaryTitle}>Order Summary</Text>
-          <View style={styles.summaryRow}>
-            <Text style={styles.summaryLabel}>
-              Subtotal ({formatNumber(orderData.summary_counts.total_items)}{" "}
-              items):
-            </Text>
-            <Text style={styles.summaryValue}>
-              {formatCurrency(order_summary.subtotal)}
-            </Text>
-          </View>
-          <View style={styles.summaryRow}>
-            <Text style={styles.summaryLabel}>Shipping Fee:</Text>
-            <Text style={styles.summaryValue}>
-              {formatCurrency(order_summary.shipping_fee)}
-            </Text>
-          </View>
-          {parseFloat(order_summary.tax || "0") > 0 && (
-            <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>Value Added Tax (VAT):</Text>
-              <Text style={styles.summaryValue}>
-                {formatCurrency(order_summary.tax)}
-              </Text>
-            </View>
-          )}
-          {parseFloat(order_summary.transaction_fee || "0") > 0 && (
-            <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>Transaction Fee:</Text>
-              <Text style={styles.summaryValue}>
-                {formatCurrency(order_summary.transaction_fee || "0")}
-              </Text>
-            </View>
-          )}
-          {parseFloat(order_summary.discount) > 0 && (
-            <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>Discount:</Text>
-              <Text style={[styles.summaryValue, styles.discountText]}>
-                -{formatCurrency(order_summary.discount)}
-              </Text>
-            </View>
-          )}
-          <View style={styles.totalRow}>
-            <Text style={styles.totalLabel}>Total</Text>
-            <Text style={styles.totalValue}>
-              {formatCurrency(order_summary.total)}
-            </Text>
-          </View>
+        {/* Order Summary */}
+<View style={styles.summaryCard}>
+  <Text style={styles.summaryTitle}>
+    {isFilteringByShop ? `Order Summary (${filterShopName})` : "Order Summary"}
+  </Text>
+  
+  {isFilteringByShop ? (
+    // Show shop-specific totals
+    <>
+      <View style={styles.summaryRow}>
+        <Text style={styles.summaryLabel}>
+          Subtotal ({formatNumber(items.length)} items):
+        </Text>
+        <Text style={styles.summaryValue}>
+          {formatCurrency(shopSpecificSubtotal.toString())}
+        </Text>
+      </View>
+      <View style={styles.summaryRow}>
+        <Text style={styles.summaryLabel}>Shipping Fee:</Text>
+        <Text style={styles.summaryValue}>
+          {formatCurrency(shopSpecificShippingFee.toString())}
+        </Text>
+      </View>
+      <View style={[styles.summaryRow, styles.totalRow]}>
+        <Text style={styles.totalLabel}>Total for this shop</Text>
+        <Text style={styles.totalValue}>
+          {formatCurrency(shopSpecificTotal.toString())}
+        </Text>
+      </View>
+    </>
+  ) : (
+    // Show full order summary for multi-shop view
+    <>
+      <View style={styles.summaryRow}>
+        <Text style={styles.summaryLabel}>
+          Subtotal ({formatNumber(orderData.summary_counts.total_items)} items):
+        </Text>
+        <Text style={styles.summaryValue}>
+          {formatCurrency(order_summary.subtotal)}
+        </Text>
+      </View>
+      <View style={styles.summaryRow}>
+        <Text style={styles.summaryLabel}>Shipping Fee:</Text>
+        <Text style={styles.summaryValue}>
+          {formatCurrency(order_summary.shipping_fee)}
+        </Text>
+      </View>
+      {parseFloat(order_summary.tax || "0") > 0 && (
+        <View style={styles.summaryRow}>
+          <Text style={styles.summaryLabel}>Value Added Tax (VAT):</Text>
+          <Text style={styles.summaryValue}>
+            {formatCurrency(order_summary.tax)}
+          </Text>
         </View>
+      )}
+      {parseFloat(order_summary.transaction_fee || "0") > 0 && (
+        <View style={styles.summaryRow}>
+          <Text style={styles.summaryLabel}>Transaction Fee:</Text>
+          <Text style={styles.summaryValue}>
+            {formatCurrency(order_summary.transaction_fee || "0")}
+          </Text>
+        </View>
+      )}
+      {parseFloat(order_summary.discount) > 0 && (
+        <View style={styles.summaryRow}>
+          <Text style={styles.summaryLabel}>Discount:</Text>
+          <Text style={[styles.summaryValue, styles.discountText]}>
+            -{formatCurrency(order_summary.discount)}
+          </Text>
+        </View>
+      )}
+      <View style={styles.totalRow}>
+        <Text style={styles.totalLabel}>Total</Text>
+        <Text style={styles.totalValue}>
+          {formatCurrency(order_summary.total)}
+        </Text>
+      </View>
+    </>
+  )}
+</View>
 
         {/* Order Information */}
         <View style={styles.infoCard}>
@@ -2641,112 +2912,169 @@ export default function ViewTrackOrderPage() {
         </View>
       </ScrollView>
       {/* Sticky Action Buttons */}
-      {hasActions() && (
-        <View style={styles.stickyFooter}>
-          <View style={styles.actionButtonsContainer}>
-            {(actions.can_cancel ||
-              (orderStatusLower === "rider_assigned" &&
-                order?.delivery_status?.toLowerCase() === "pending")) && (
-              <TouchableOpacity
-                style={styles.cancelOrderButton}
-                onPress={handleCancelOrder}
-              >
-                <Text style={styles.cancelOrderButtonText}>Cancel Order</Text>
-              </TouchableOpacity>
-            )}
+      {/* Sticky Action Buttons */}
+{(() => {
+  // Get the current shop status if filtering by a specific shop
+  const currentShopStatus = isFilteringByShop && filterShopId 
+    ? orderData?.order?.shop_statuses?.[filterShopId as string] 
+    : null;
+  
+  // For shop-specific view - check shop_status
+  const showOrderReceivedForShop = isFilteringByShop && currentShopStatus === 'delivered';
+  const showCompletedActionsForShop = isFilteringByShop && currentShopStatus === 'completed';
+  
+  // For non-filtered view - check order status
+  const showOrderReceivedForOrder = !isFilteringByShop && (
+    orderStatusLower === "delivered" ||
+    orderStatusLower === "picked_up" ||
+    orderStatusLower === "partially_delivered"
+  );
+  
+  const showCancelForOrder = !isFilteringByShop && (
+    actions.can_cancel ||
+    (orderStatusLower === "rider_assigned" && order?.delivery_status?.toLowerCase() === "pending")
+  );
+  
+  const showRefundRateForOrder = !isFilteringByShop && (
+    orderStatusLower === "delivered" ||
+    orderStatusLower === "partially_delivered" ||
+    orderStatusLower === "completed"
+  ) && (actions.can_review || actions.can_return);
+  
+  // Don't show footer if no actions available
+  if (!showCancelForOrder && !showOrderReceivedForOrder && !showRefundRateForOrder && !showOrderReceivedForShop && !showCompletedActionsForShop) {
+    return null;
+  }
+  
+  return (
+    <View style={styles.stickyFooter}>
+      <View style={styles.actionButtonsContainer}>
+        {/* Cancel Order Button - only for non-filtered view when order is cancellable */}
+        {showCancelForOrder && (
+          <TouchableOpacity
+            style={styles.cancelOrderButton}
+            onPress={handleCancelOrder}
+          >
+            <Text style={styles.cancelOrderButtonText}>Cancel Order</Text>
+          </TouchableOpacity>
+        )}
 
-            {(orderStatusLower === "delivered" ||
-              orderStatusLower === "picked_up" ||
-              orderStatusLower === "partially_delivered") && (
-              <TouchableOpacity
-                style={styles.orderReceivedButton}
-                onPress={handleOrderReceived}
-              >
-                <Text style={styles.orderReceivedButtonText}>
-                  Order Received
-                </Text>
-              </TouchableOpacity>
-            )}
+        {/* Order Received Button - for shop-specific view when shop_status is 'delivered' */}
+        {showOrderReceivedForShop && (
+          <TouchableOpacity
+            style={styles.orderReceivedButton}
+            onPress={handleOrderReceived}
+          >
+            <Text style={styles.orderReceivedButtonText}>Order Received</Text>
+          </TouchableOpacity>
+        )}
 
-            {/* Refund and Rate buttons - Show if order has reviewable or returnable items */}
-            {/* Show for delivered, partially_delivered, or completed */}
-            {(orderStatusLower === "delivered" ||
-              orderStatusLower === "partially_delivered" ||
-              orderStatusLower === "completed") &&
-              (actions.can_review || actions.can_return) &&
-              (() => {
-                const refundDate = order.refund_expire_date;
-                const hasRefundDate =
-                  refundDate !== null &&
-                  refundDate !== undefined &&
-                  refundDate !== "";
-                const isRefundExpired =
-                  hasRefundDate && new Date(refundDate) < new Date();
-                const isPickupMethod = String(
-                  shipping_info?.delivery_method || "",
-                )
-                  .toLowerCase()
-                  .includes("pickup");
-                const isDisabled = isRefundExpired || isPickupMethod;
+        {/* Order Received Button - for non-filtered view */}
+        {showOrderReceivedForOrder && (
+          <TouchableOpacity
+            style={styles.orderReceivedButton}
+            onPress={handleOrderReceived}
+          >
+            <Text style={styles.orderReceivedButtonText}>Order Received</Text>
+          </TouchableOpacity>
+        )}
 
-                return (
-                  <>
-                    {actions.can_return && (
-                      <TouchableOpacity
-                        style={[
-                          styles.requestRefundButton,
-                          isDisabled && styles.requestRefundButtonDisabled,
-                        ]}
-                        onPress={() => {
-                          if (isRefundExpired) {
-                            Alert.alert(
-                              "Refund Period Expired",
-                              "The refund period for this order has expired.",
-                            );
-                          } else if (isPickupMethod) {
-                            Alert.alert(
-                              "Pickup Orders",
-                              "Refunds are not available for pickup orders.",
-                            );
-                          } else {
-                            router.push(
-                              `/customer/request-refund?orderId=${order.id}`,
-                            );
-                          }
-                        }}
-                        disabled={isDisabled}
-                      >
-                        <Text
-                          style={[
-                            styles.requestRefundButtonText,
-                            isDisabled &&
-                              styles.requestRefundButtonTextDisabled,
-                          ]}
-                        >
-                          Request Refund{" "}
-                          {isPickupMethod
-                            ? "(Not Available)"
-                            : isRefundExpired
-                              ? "(Expired)"
-                              : ""}
-                        </Text>
-                      </TouchableOpacity>
-                    )}
+        {/* Refund and Rate buttons - for shop-specific view when shop_status is 'completed' */}
+        {showCompletedActionsForShop && (
+          <>
+            <TouchableOpacity
+              style={styles.requestRefundButton}
+              onPress={() => {
+                router.push(`/customer/request-refund?orderId=${order.id}&shopId=${filterShopId}`);
+              }}
+            >
+              <Text style={styles.requestRefundButtonText}>Request Refund</Text>
+            </TouchableOpacity>
 
-                    {actions.can_review && (
-                      <TouchableOpacity
-                        style={styles.rateButton}
-                        onPress={() => setRateModalVisible(true)}
-                      >
-                        <Text style={styles.rateButtonText}>Rate Products</Text>
-                      </TouchableOpacity>
-                    )}
-                  </>
-                );
-              })()}
-          </View>
-        </View>
-      )}
+            <TouchableOpacity
+              style={styles.rateButton}
+              onPress={() => setRateModalVisible(true)}
+            >
+              <Text style={styles.rateButtonText}>Rate Products</Text>
+            </TouchableOpacity>
+          </>
+        )}
+
+        {/* Refund and Rate buttons - for non-filtered view when order is delivered/completed */}
+        {showRefundRateForOrder && (() => {
+          const refundDate = order.refund_expire_date;
+          const hasRefundDate =
+            refundDate !== null &&
+            refundDate !== undefined &&
+            refundDate !== "";
+          const isRefundExpired =
+            hasRefundDate && new Date(refundDate) < new Date();
+          const isPickupMethod = String(
+            shipping_info?.delivery_method || "",
+          )
+            .toLowerCase()
+            .includes("pickup");
+          const isDisabled = isRefundExpired || isPickupMethod;
+
+          return (
+            <>
+              {actions.can_return && (
+                <TouchableOpacity
+                  style={[
+                    styles.requestRefundButton,
+                    isDisabled && styles.requestRefundButtonDisabled,
+                  ]}
+                  onPress={() => {
+                    if (isRefundExpired) {
+                      Alert.alert(
+                        "Refund Period Expired",
+                        "The refund period for this order has expired.",
+                      );
+                    } else if (isPickupMethod) {
+                      Alert.alert(
+                        "Pickup Orders",
+                        "Refunds are not available for pickup orders.",
+                      );
+                    } else {
+                      router.push(
+                        `/customer/request-refund?orderId=${order.id}`,
+                      );
+                    }
+                  }}
+                  disabled={isDisabled}
+                >
+                  <Text
+                    style={[
+                      styles.requestRefundButtonText,
+                      isDisabled &&
+                        styles.requestRefundButtonTextDisabled,
+                    ]}
+                  >
+                    Request Refund{" "}
+                    {isPickupMethod
+                      ? "(Not Available)"
+                      : isRefundExpired
+                        ? "(Expired)"
+                        : ""}
+                  </Text>
+                </TouchableOpacity>
+              )}
+
+              {actions.can_review && (
+                <TouchableOpacity
+                  style={styles.rateButton}
+                  onPress={() => setRateModalVisible(true)}
+                >
+                  <Text style={styles.rateButtonText}>Rate Products</Text>
+                </TouchableOpacity>
+              )}
+            </>
+          );
+        })()}
+      </View>
+    </View>
+  );
+})()}
 
       <RateItemModal
         visible={rateModalVisible}
@@ -3986,5 +4314,29 @@ const styles = StyleSheet.create({
     color: "#6B7280",
     textAlign: "center",
     lineHeight: 16,
+  },
+  shopTotalRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingTop: 8,
+    marginTop: 4,
+    borderTopWidth: 1,
+    borderTopColor: "#E5E7EB",
+  },
+  shopTotalLabel: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#111827",
+  },
+  shopTotalValue: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#F97316",
+  },
+  riderPhone: {
+    fontSize: 14,
+    fontWeight: "500",
+    color: "#3B82F6",
   },
 });

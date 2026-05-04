@@ -30546,6 +30546,7 @@ class PurchasesBuyer(viewsets.ViewSet):
             'payment_status': payment.status if payment else None,
             'delivery_status': delivery.status if delivery else None,
             'delivery_rider': delivery.rider.rider.username if delivery and delivery.rider and delivery.rider.rider else None,
+            'delivery_rider_phone': delivery.rider.rider.contact_number if delivery and delivery.rider and delivery.rider.rider else None, 
             'pickup_date': order.pickup_date.isoformat() if order.pickup_date else None,
             'items': items_data
         }
@@ -30834,6 +30835,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                     'payment_status': payment.status if payment else None,
                     'delivery_status': delivery.status if delivery else None,
                     'delivery_rider': delivery.rider.rider.username if delivery and delivery.rider and delivery.rider.rider else None,
+                    'delivery_rider_phone': delivery.rider.rider.contact_number if delivery and delivery.rider and delivery.rider.rider else None,
                     'delivery_notes': delivery.notes if delivery else None,
                     'delivery_date': (
                         (getattr(delivery, 'delivery_date', None)

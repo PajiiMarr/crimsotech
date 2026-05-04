@@ -61,6 +61,41 @@ interface OrderItem {
   }>;
 }
 
+// Grouped order by shop - each shop gets its own "order" entry
+interface ShopGroupOrder {
+  id: string; // Combination of order_id + shop_id
+  original_order_id: string;
+  shop_id: string;
+  shop_name: string;
+  shop_picture?: string | null;
+  status: string; // Status from OrderShopStatus or derived from items
+  total_amount: string; // Only items from this shop
+  payment_method: string;
+  delivery_method: string | null;
+  delivery_address: string;
+  created_at: string;
+  completed_at: string | null;
+  payment_status: string | null;
+  delivery_status: string | null;
+  delivery_rider: string | null;
+  pickup_date: string | null;
+  items: OrderItem[];
+  // Original order reference
+  original_order: {
+    order_id: string;
+    total_amount: string;
+    status: string;
+  };
+}
+
+interface PurchasesResponse {
+  user_id: string;
+  username: string;
+  total_purchases: number;
+  purchases: PurchaseOrder[];
+}
+
+// Backend order response (unchanged)
 interface PurchaseOrder {
   order_id: string;
   status: string;
@@ -75,13 +110,6 @@ interface PurchaseOrder {
   delivery_rider: string | null;
   pickup_date: string | null;
   items: OrderItem[];
-}
-
-interface PurchasesResponse {
-  user_id: string;
-  username: string;
-  total_purchases: number;
-  purchases: PurchaseOrder[];
 }
 
 interface PurchaseItem {
@@ -106,6 +134,25 @@ interface PurchaseItem {
     title: string;
     sku: string;
   };
+}
+
+// New: ShopGroup interface for separated orders
+interface ShopGroup {
+  groupId: string;
+  originalOrderId: string;
+  shopId: string;
+  shopName: string;
+  shopPicture?: string | null;
+  createdAt: string;
+  items: PurchaseItem[];
+  totalAmount: number;
+  status: string;
+  paymentMethod: string;
+  deliveryMethod: string | null;
+  deliveryAddress: string;
+  paymentStatus: string | null;
+  deliveryStatus: string | null;
+  pickupDate: string | null;
 }
 
 // Status tabs configuration
@@ -190,8 +237,6 @@ const formatImageUrl = (url: string | null | undefined): string | null => {
 };
 
 // Helper function to map backend status to frontend status
-// Helper function to map backend status to frontend status
-// Update the mapStatus function to better handle checkout status
 const mapStatus = (backendStatus: string, checkoutStatus?: string): PurchaseItem['status'] => {
   // If there's a checkout status and it's cancelled, use that
   if (checkoutStatus === 'cancelled') {
@@ -278,6 +323,7 @@ const formatNumber = (num: number): string => {
 export default function PurchasesPage() {
   const { userId, loading: authLoading } = useAuth();
   const [purchaseItems, setPurchaseItems] = useState<PurchaseItem[]>([]);
+  const [shopGroups, setShopGroups] = useState<ShopGroup[]>([]); // New: grouped by shop
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [activeTab, setActiveTab] = useState('all');
@@ -356,6 +402,11 @@ export default function PurchasesPage() {
       });
   
       setPurchaseItems(items);
+      
+      // Group items by shop within the same original order
+      const groups = groupItemsByShop(items);
+      setShopGroups(groups);
+      
       calculateOrderCounts(items);
     } catch (error) {
       console.error('Error fetching purchases:', error);
@@ -364,6 +415,74 @@ export default function PurchasesPage() {
       setLoading(false);
       setRefreshing(false);
     }
+  };
+
+  // NEW: Group items by shop (separate orders from different shops)
+  const groupItemsByShop = (items: PurchaseItem[]): ShopGroup[] => {
+    const groupsMap = new Map<string, ShopGroup>();
+    
+    items.forEach((item) => {
+      // Create unique key: original_order_id + shop_id
+      const shopId = item.shop_id || 'unknown-shop';
+      const groupKey = `${item.order_id}-${shopId}`;
+      
+      if (!groupsMap.has(groupKey)) {
+        // Get all items from this order that belong to this shop
+        const shopItems = items.filter(
+          i => i.order_id === item.order_id && (i.shop_id || 'unknown-shop') === shopId
+        );
+        
+        // Calculate total amount for this shop group
+        const totalAmount = shopItems.reduce((sum, i) => sum + i.total_amount, 0);
+        
+        // Determine group status - use highest priority status from items
+        const statusPriority: Record<string, number> = {
+          'cancelled': 0,
+          'pending': 1,
+          'in_progress': 2,
+          'ready_for_pickup': 3,
+          'to_ship': 4,
+          'to_receive': 5,
+          'delivered': 6,
+          'picked_up': 7,
+          'completed': 8,
+        };
+        
+        let groupStatus = 'pending';
+        let highestPriority = -1;
+        
+        shopItems.forEach((i) => {
+          const priority = statusPriority[i.status] ?? 1;
+          if (priority > highestPriority) {
+            highestPriority = priority;
+            groupStatus = i.status;
+          }
+        });
+        
+        groupsMap.set(groupKey, {
+          groupId: groupKey,
+          originalOrderId: item.order_id,
+          shopId: shopId,
+          shopName: item.shop_name,
+          shopPicture: item.item.shop_picture,
+          createdAt: item.order.created_at,
+          items: shopItems,
+          totalAmount: totalAmount,
+          status: groupStatus,
+          paymentMethod: item.order.payment_method,
+          deliveryMethod: item.order.delivery_method,
+          deliveryAddress: item.order.delivery_address,
+          paymentStatus: item.order.payment_status,
+          deliveryStatus: item.order.delivery_status,
+          pickupDate: item.order.pickup_date,
+        });
+      }
+    });
+    
+    // Convert map to array and sort by created_at (newest first)
+    return Array.from(groupsMap.values()).sort((a, b) => 
+      new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
   };
 
   const calculateOrderCounts = (items: PurchaseItem[]) => {
@@ -380,16 +499,10 @@ export default function PurchasesPage() {
   
     items.forEach((item) => {
       const status = item.status;
-      // Use item's status directly since we're already mapping correctly
       const isCancelledItem = status === 'cancelled';
       
-      // Count pending - ONLY items with status 'pending' (not cancelled)
       if (status === 'pending') counts.pending++;
-      
-      // Count processing - only 'in_progress' status (not pending or cancelled)
       if (status === 'in_progress') counts.processing++;
-  
-      // Count to_pickup - ONLY 'ready_for_pickup' status
       if (status === 'ready_for_pickup') counts.to_pickup++;
   
       const rawOrderStatus = (item.order?.status || '').toString().trim().toLowerCase();
@@ -412,7 +525,6 @@ export default function PurchasesPage() {
         if (!isCancelledItem) counts.rate++;
       }
   
-      // Count returns - includes cancelled items and return_refund status
       if (status === 'cancelled' || status === 'return_refund') {
         counts.returns++;
       }
@@ -432,51 +544,57 @@ export default function PurchasesPage() {
     fetchPurchases();
   };
 
-  const getFilteredItems = () => {
-    let filtered = purchaseItems;
+  // NEW: Filter shop groups by tab
+  const getFilteredGroups = (): ShopGroup[] => {
+    let filtered = shopGroups;
   
     if (activeTab !== 'all') {
       switch (activeTab) {
         case 'pending':
-          filtered = filtered.filter(item => item.status === 'pending');
+          filtered = filtered.filter(group => 
+            group.items.some(item => item.status === 'pending')
+          );
           break;
         case 'processing':
-          filtered = filtered.filter(item => {
-            // Only show 'in_progress' status, not pending
-            return item.status === 'in_progress';
-          });
+          filtered = filtered.filter(group => 
+            group.items.some(item => item.status === 'in_progress')
+          );
           break;
         case 'to_pickup':
-          filtered = filtered.filter(item => {
-            // ONLY show 'ready_for_pickup' status
-            // Do NOT show pending orders here
-            return item.status === 'ready_for_pickup';
-          });
+          filtered = filtered.filter(group => 
+            group.items.some(item => item.status === 'ready_for_pickup')
+          );
           break;
-          case 'shipped':
-            filtered = filtered.filter(item => {
-              return (
-                item.status === 'to_ship' ||
-                item.status === 'to_receive' ||
-                item.status === 'delivered' ||
-                item.status === 'picked_up' ||
-                item.status === 'completed'
-              );
-            });
-            break;
+        case 'shipped':
+          filtered = filtered.filter(group => 
+            group.items.some(item => 
+              item.status === 'to_ship' ||
+              item.status === 'to_receive' ||
+              item.status === 'delivered' ||
+              item.status === 'picked_up' ||
+              item.status === 'completed'
+            )
+          );
+          break;
         case 'completed':
-          filtered = filtered.filter(item => 
-            item.status === 'picked_up' || item.status === 'completed'
+          filtered = filtered.filter(group => 
+            group.items.some(item => 
+              item.status === 'picked_up' || item.status === 'completed'
+            )
           );
           break;
         case 'rate':
-          filtered = filtered.filter(item => 
-            (item.status === 'picked_up' || item.status === 'completed') && item.can_review
+          filtered = filtered.filter(group => 
+            group.items.some(item => 
+              (item.status === 'picked_up' || item.status === 'completed') && item.can_review
+            )
           );
           break;
         case 'returns':
-          filtered = filtered.filter(item => 
-            item.status === 'cancelled' || item.status === 'return_refund'
+          filtered = filtered.filter(group => 
+            group.items.some(item => 
+              item.status === 'cancelled' || item.status === 'return_refund'
+            )
           );
           break;
       }
@@ -497,42 +615,50 @@ export default function PurchasesPage() {
     );
   };
 
-  const handleCancelOrder = (item: PurchaseItem) => {
-    Alert.alert(
-      'Cancel Order',
-      'Are you sure you want to cancel this order?',
-      [
-        { text: 'No', style: 'cancel' },
-        { 
-          text: 'Yes, Cancel', 
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await AxiosInstance.post(`/purchases-buyer/${item.order_id}/cancel/`, {}, {
-                headers: { 'X-User-Id': userId }
-              });
-              Alert.alert('Success', 'Order cancelled successfully');
-              fetchPurchases();
-            } catch (error) {
-              Alert.alert('Error', 'Failed to cancel order');
-            }
-          }
-        }
-      ]
-    );
-  };
+  // NEW: Render a shop group card (separate order per shop)
+  const renderShopGroupCard = ({ item: group }: { item: ShopGroup }) => {
+    // Determine if this group has Cash on Pickup
+    const showPickupBanner = 
+      isCashOnPickup({
+        order_id: group.originalOrderId,
+        status: group.status,
+        total_amount: String(group.totalAmount),
+        payment_method: group.paymentMethod,
+        delivery_method: group.deliveryMethod,
+        delivery_address: group.deliveryAddress,
+        created_at: group.createdAt,
+        completed_at: null,
+        payment_status: group.paymentStatus,
+        delivery_status: group.deliveryStatus,
+        delivery_rider: null,
+        pickup_date: group.pickupDate,
+        items: []
+      }) &&
+      group.items.some(item => 
+        item.status === 'in_progress' || 
+        item.status === 'ready_for_pickup' || 
+        item.status === 'pending'
+      ) &&
+      !!group.pickupDate;
 
-  const renderOrderCard = ({ item }: { item: PurchaseItem }) => {
-    const pickupDate = item.order.pickup_date;
-    const showPickupBanner =
-      isCashOnPickup(item.order) &&
-      (item.status === 'in_progress' || item.status === 'ready_for_pickup' || item.status === 'pending') &&
-      !!pickupDate;
+    // Get the first item for display (or show multiple if needed)
+    const primaryItem = group.items[0];
+    const hasMultipleItems = group.items.length > 1;
 
     return (
       <TouchableOpacity 
         style={[styles.orderCard, showPickupBanner && styles.orderCardWithBanner]}
-        onPress={() => router.push(`/customer/view-order?orderId=${item.order_id}&checkoutId=${item.item.checkout_id}`)}
+        onPress={() => {
+          // Pass both orderId AND shopId to filter by shop
+          router.push({
+            pathname: '/customer/view-order',
+            params: { 
+              orderId: group.originalOrderId,
+              shopId: group.shopId,
+              shopName: group.shopName
+            }
+          });
+        }}
         activeOpacity={0.7}
       >
         {/* Pickup Date Banner */}
@@ -544,7 +670,7 @@ export default function PurchasesPage() {
             <View style={styles.pickupBannerContent}>
               <Text style={styles.pickupBannerTitle}>Pickup Scheduled</Text>
               <Text style={styles.pickupBannerDate}>
-                {formatPickupDateTime(pickupDate)}
+                {formatPickupDateTime(group.pickupDate!)}
               </Text>
               <View style={styles.pickupBannerLocation}>
                 <MaterialIcons name="location-on" size={10} color="#F59E0B" />
@@ -556,70 +682,70 @@ export default function PurchasesPage() {
             </View>
           </View>
         )}
-        {/* Cancelled Badge for individual cancelled items */}
-{/* Cancelled Badge for individual cancelled items */}
-{/* {item.status === 'cancelled' && (
-  <View style={styles.cancelledItemBadge}>
-    <MaterialIcons name="cancel" size={12} color="#EF4444" />
-    <Text style={styles.cancelledItemText}>Item Cancelled</Text>
-  </View>
-)} */}
 
-        {/* Shop Header */}
+        {/* Shop Header - This is the key differentiator for multi-shop orders */}
         <View style={styles.shopHeader}>
           <View style={styles.shopInfo}>
             <MaterialIcons name="store" size={14} color="#6B7280" />
-            <Text style={styles.shopName} numberOfLines={1}>{item.shop_name}</Text>
+            <Text style={styles.shopName} numberOfLines={1}>{group.shopName}</Text>
           </View>
           <MaterialIcons name="chevron-right" size={16} color="#9CA3AF" />
         </View>
 
-        {/* Product Info */}
+        {/* Multiple items indicator */}
+        {hasMultipleItems && (
+          <View style={styles.multipleItemsBadge}>
+            <MaterialIcons name="apps" size={12} color="#6B7280" />
+            <Text style={styles.multipleItemsText}>{group.items.length} items from this shop</Text>
+          </View>
+        )}
+
+        {/* Primary Product Info */}
         <View style={styles.productContainer}>
           <Image 
-            source={{ uri: item.image }} 
+            source={{ uri: primaryItem.image }} 
             style={styles.productImage}
             defaultSource={require('../../assets/images/icon.png')}
           />
           <View style={styles.productDetails}>
             <Text style={styles.productName} numberOfLines={2}>
-              {item.product_name}
+              {primaryItem.product_name}
+              {hasMultipleItems && ` +${group.items.length - 1} more`}
             </Text>
             
             {/* Variant - if available */}
-            {item.variant_info && item.variant_info.title && (
+            {primaryItem.variant_info && primaryItem.variant_info.title && (
               <View style={styles.infoRow}>
                 <MaterialIcons name="label-outline" size={12} color="#9CA3AF" />
-                <Text style={styles.infoText} numberOfLines={1}>{item.variant_info.title}</Text>
+                <Text style={styles.infoText} numberOfLines={1}>{primaryItem.variant_info.title}</Text>
               </View>
             )}
 
             {/* Payment Method */}
             <View style={styles.infoRow}>
               <MaterialIcons name="payment" size={12} color="#9CA3AF" />
-              <Text style={styles.infoText} numberOfLines={1}>{item.order.payment_method}</Text>
+              <Text style={styles.infoText} numberOfLines={1}>{group.paymentMethod}</Text>
             </View>
 
             {/* Status Badge */}
             <View style={styles.statusContainer}>
-              {getStatusBadge(item.status)}
+              {getStatusBadge(group.status)}
             </View>
 
             {/* Quantity and Price */}
-            {/* Quantity and Price */}
-<View style={styles.priceRow}>
-<Text style={styles.quantity}>x{formatNumber(item.quantity)}</Text>
-<Text style={styles.price}>{formatCurrency(item.total_amount)}</Text>
-</View>
+            <View style={styles.priceRow}>
+              <Text style={styles.quantity}>x{formatNumber(primaryItem.quantity)}</Text>
+              <Text style={styles.price}>{formatCurrency(group.totalAmount)}</Text>
+            </View>
           </View>
         </View>
 
-        {/* Voucher Applied */}
-        {item.item?.voucher_applied && (
+        {/* Voucher Applied (from first item) */}
+        {primaryItem.item?.voucher_applied && (
           <View style={styles.voucherContainer}>
             <MaterialIcons name="local-offer" size={12} color="#10B981" />
             <Text style={styles.voucherText} numberOfLines={1}>
-              {item.item.voucher_applied.name} ({item.item.voucher_applied.code})
+              {primaryItem.item.voucher_applied.name} ({primaryItem.item.voucher_applied.code})
             </Text>
           </View>
         )}
@@ -627,17 +753,17 @@ export default function PurchasesPage() {
         {/* Total and Action */}
         <View style={styles.footer}>
           <View style={styles.totalContainer}>
-            <Text style={styles.totalLabel}>Total:</Text>
-            <Text style={styles.totalAmount}>{formatCurrency(parseFloat(item.order.total_amount))}</Text>
+            <Text style={styles.totalLabel}>Shop Total:</Text>
+            <Text style={styles.totalAmount}>{formatCurrency(group.totalAmount)}</Text>
           </View>
 
           {/* Action Buttons */}
           <View style={styles.actionButtons}>
             {/* View Details button for returns - only for return_refund, not cancelled */}
-            {item.status === 'return_refund' && (
+            {group.status === 'return_refund' && (
               <TouchableOpacity 
                 style={[styles.actionButton, styles.detailsButton]}
-                onPress={() => router.push(`/customer/view-refund?orderId=${item.order_id}`)}
+                onPress={() => router.push(`/customer/view-refund?orderId=${group.originalOrderId}`)}
               >
                 <MaterialIcons name="visibility" size={12} color="#6B7280" />
                 <Text style={styles.detailsButtonText}>Details</Text>
@@ -645,18 +771,11 @@ export default function PurchasesPage() {
             )}
           </View>
         </View>
-
-        {/* Cancelled Reason - if available */}
-        {item.reason && (
-          <View style={styles.reasonContainer}>
-            <Text style={styles.reasonText}>{item.reason}</Text>
-          </View>
-        )}
       </TouchableOpacity>
     );
   };
 
-  const filteredItems = getFilteredItems();
+  const filteredGroups = getFilteredGroups();
 
   if (authLoading || loading) {
     return (
@@ -705,8 +824,8 @@ export default function PurchasesPage() {
           })}
         </ScrollView>
 
-        {/* Purchases List */}
-        {filteredItems.length === 0 ? (
+        {/* Purchases List - Now showing shop groups instead of individual items */}
+        {filteredGroups.length === 0 ? (
           <View style={styles.emptyContainer}>
             <MaterialIcons name="shopping-bag" size={48} color="#E5E7EB" />
             <Text style={styles.emptyTitle}>No purchases found</Text>
@@ -729,9 +848,9 @@ export default function PurchasesPage() {
           </View>
         ) : (
           <FlatList
-            data={filteredItems}
-            renderItem={renderOrderCard}
-            keyExtractor={(item) => item.id}
+            data={filteredGroups}
+            renderItem={renderShopGroupCard}
+            keyExtractor={(item) => item.groupId}
             contentContainerStyle={styles.listContent}
             showsVerticalScrollIndicator={false}
             refreshControl={
@@ -927,6 +1046,17 @@ const styles = StyleSheet.create({
     color: '#374151',
     flex: 1,
   },
+  multipleItemsBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 8,
+    paddingVertical: 4,
+  },
+  multipleItemsText: {
+    fontSize: 11,
+    color: '#6B7280',
+  },
   productContainer: {
     flexDirection: 'row',
     gap: 10,
@@ -947,21 +1077,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#111827',
     marginBottom: 2,
-  },
-  cancelledPriceContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  cancelledPrice: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#9CA3AF',
-    textDecorationLine: 'line-through',
-  },
-  refundNote: {
-    fontSize: 10,
-    color: '#10B981',
-    fontStyle: 'italic',
   },
   infoRow: {
     flexDirection: 'row',
@@ -1063,16 +1178,6 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: '#6B7280',
   },
-  reasonContainer: {
-    marginTop: 6,
-    padding: 6,
-    backgroundColor: '#FEF2F2',
-    borderRadius: 6,
-  },
-  reasonText: {
-    fontSize: 10,
-    color: '#EF4444',
-  },
   emptyContainer: {
     flex: 1,
     alignItems: 'center',
@@ -1103,21 +1208,5 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '600',
-  },
-  cancelledItemBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FEE2E2',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 4,
-    alignSelf: 'flex-start',
-    gap: 4,
-    marginTop: 4,
-  },
-  cancelledItemText: {
-    fontSize: 10,
-    fontWeight: '600',
-    color: '#EF4444',
   },
 });
