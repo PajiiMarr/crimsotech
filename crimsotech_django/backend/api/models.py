@@ -2678,6 +2678,9 @@ class OrderShopStatus(models.Model):
     status = models.CharField(max_length=50, choices=STATUS_CHOICES, default='pending')
     confirmed_at = models.DateTimeField(null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
+    pickup_date = models.DateTimeField(null=True, blank=True)
+    pickup_expire_date = models.DateTimeField(null=True, blank=True)
+    refund_expire_date = models.DateTimeField(null=True, blank=True)
     
     class Meta:
         unique_together = ['order', 'shop']
