@@ -25445,7 +25445,6 @@ class SellerOrderList(viewsets.ViewSet):
             if is_pickup:
                 return Response({"success": False, "message": "Order is for pickup, not delivery"}, status=status.HTTP_400_BAD_REQUEST)
             
-            # Get shop from first checkout item
             checkout_item = order.checkout_set.first()
             if not checkout_item:
                 return Response({"success": False, "message": "Cannot find order items"}, status=status.HTTP_400_BAD_REQUEST)
@@ -25466,7 +25465,6 @@ class SellerOrderList(viewsets.ViewSet):
             if not shop or not shop_id_str:
                 return Response({"success": False, "message": "Cannot determine shop for this order"}, status=status.HTTP_400_BAD_REQUEST)
             
-            # Check for active deliveries for THIS SHOP only
             active_delivery = Delivery.objects.filter(
                 order=order, shop=shop, status__in=['accepted', 'picked_up', 'in_progress']
             ).exists()
@@ -25477,26 +25475,37 @@ class SellerOrderList(viewsets.ViewSet):
             actual_delivery_fee = None
             fee_source = None
             
-            # Debug: Print available breakdown
             print(f"🔍 ORDER {order.order} - shipping_fees_breakdown: {order.shipping_fees_breakdown}")
             print(f"🔍 Looking for shop_id: {shop_id_str}")
             
             # Method 1: Get from order.shipping_fees_breakdown (primary source)
             if hasattr(order, 'shipping_fees_breakdown') and order.shipping_fees_breakdown:
-                # Try both string and UUID format
-                shop_shipping_fee = order.shipping_fees_breakdown.get(shop_id_str)
-                
-                # If not found, try with the shop's UUID object as key
-                if shop_shipping_fee is None and shop:
-                    shop_shipping_fee = order.shipping_fees_breakdown.get(shop.id)
-                
-                if shop_shipping_fee is not None:
-                    try:
-                        actual_delivery_fee = Decimal(str(shop_shipping_fee))
-                        fee_source = "order.shipping_fees_breakdown"
-                        print(f"✅ Using shipping fee from order.shipping_fees_breakdown: ₱{actual_delivery_fee}")
-                    except (ValueError, TypeError) as e:
-                        print(f"⚠️ Error converting shipping fee: {e}")
+                if isinstance(order.shipping_fees_breakdown, dict):
+                    # Try string version
+                    shop_shipping_fee = order.shipping_fees_breakdown.get(shop_id_str)
+                    
+                    # If not found, try with the shop's UUID object as key
+                    if shop_shipping_fee is None and shop:
+                        shop_shipping_fee = order.shipping_fees_breakdown.get(str(shop.id))
+                    
+                    # If still not found, try the original shop.id (UUID object)
+                    if shop_shipping_fee is None and shop:
+                        shop_shipping_fee = order.shipping_fees_breakdown.get(shop.id)
+                    
+                    # Also check case-insensitive keys (some might have different case)
+                    if shop_shipping_fee is None:
+                        for key, value in order.shipping_fees_breakdown.items():
+                            if str(key).lower() == shop_id_str.lower() or (shop and str(key).lower() == str(shop.id).lower()):
+                                shop_shipping_fee = value
+                                break
+                    
+                    if shop_shipping_fee is not None:
+                        try:
+                            actual_delivery_fee = Decimal(str(shop_shipping_fee))
+                            fee_source = "order.shipping_fees_breakdown"
+                            print(f"✅ Using shipping fee from order.shipping_fees_breakdown: ₱{actual_delivery_fee}")
+                        except (ValueError, TypeError) as e:
+                            print(f"⚠️ Error converting shipping fee: {e}")
             
             # Method 2: Fallback to checkout.shipping_fee
             if actual_delivery_fee is None:
@@ -25577,7 +25586,6 @@ class SellerOrderList(viewsets.ViewSet):
                     delivery_fee = actual_delivery_fee
                 else:
                     delivery_fee = Decimal(str(self._calculate_delivery_fee(total_distance)))
-                    estimated_minutes = self._calculate_estimated_time(total_distance)
                 
                 rider_distances.append({
                     'rider': rider,
@@ -25717,7 +25725,7 @@ class SellerOrderList(viewsets.ViewSet):
                     "shop_name": shop.name,
                     "delivery_fee": float(delivery_fee),
                     "fee_source": fee_source or 'calculated_from_distance',
-                    "shipping_fees_breakdown": order.shipping_fees_breakdown,
+                    "original_shipping_fees_breakdown": order.shipping_fees_breakdown,
                     "nearest_rider": {
                         "name": nearest_rider_name,
                         "username": selected_rider.rider.username,
@@ -25734,7 +25742,7 @@ class SellerOrderList(viewsets.ViewSet):
             import traceback
             traceback.print_exc()
             return Response({"success": False, "message": str(e), "traceback": traceback.format_exc()}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
+        
 
     @action(detail=False, methods=['post'])
     def check_delivery_responses(self, request):
