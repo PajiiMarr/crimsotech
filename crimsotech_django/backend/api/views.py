@@ -30703,6 +30703,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                         'return_deadline': (checkout.created_at + timedelta(days=14)).isoformat() if checkout.created_at else None,
                         'shipping_fee': str(getattr(checkout, 'shipping_fee', 0.00)),
                         'distance_km': getattr(checkout, 'distance_km', None),
+                        'value_added_tax_amount': str(getattr(variant, 'value_added_tax_amount', 0.00) if variant else '0.00'),
                     }
                     items_data.append(item_data)
                 else:
@@ -30736,7 +30737,8 @@ class PurchasesBuyer(viewsets.ViewSet):
                         'can_return': False,
                         'has_reviewed': False,
                         'has_refunded': False,
-                        'is_refundable': False
+                        'is_refundable': False,
+                        'value_added_tax_amount': str(getattr(variant, 'value_added_tax_amount', 0.00) if variant else '0.00'),
                     }
                     items_data.append(item_data)
             
