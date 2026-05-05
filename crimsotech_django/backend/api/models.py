@@ -1206,6 +1206,11 @@ class Checkout(models.Model):
     
     # NEW: Add shipping fee for this checkout item (per shop)
     shipping_fee = models.DecimalField(max_digits=10, decimal_places=2, default=0.00, null=True, blank=True)
+    transaction_fee = models.FloatField(
+        default=0.00,
+        null=True,
+        blank=True
+    )
     distance_km = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
 
     class Meta:
