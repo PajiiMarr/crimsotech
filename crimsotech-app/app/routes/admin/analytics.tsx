@@ -491,7 +491,7 @@ const PrintReport = ({
       <div className="print-chart-row-half page-break-avoid">
         <div className="print-chart-card">
           <h3>Top Products</h3>
-          <table className="print-bar-table" style={{ width: '100%', fontSize: '7.5pt' }}>
+          <table style={{ width: '100%', fontSize: '7.5pt' }}>
             <thead><tr><th>Product</th><th style={{ textAlign: 'right' }}>Orders</th><th style={{ textAlign: 'right' }}>Revenue</th></tr></thead>
             <tbody>
               {(productPerformanceData || []).slice(0, 6).map((p: any, i: number) => (
@@ -935,13 +935,14 @@ export default function Analytics({ loaderData }: Route.ComponentProps) {
     setModalOpen(true);
   };
   
+  // FIXED: Format currency without K/M abbreviations - shows full numbers
   const formatCurrency = (amount: number): string => {
-    if (amount >= 1000000) {
-      return `₱${(amount / 1000000).toFixed(1)}M`;
-    } else if (amount >= 1000) {
-      return `₱${(amount / 1000).toFixed(1)}K`;
-    }
-    return `₱${amount.toLocaleString()}`;
+    if (amount === 0) return '₱0.00';
+    // Format with commas and 2 decimal places, no abbreviations
+    return `₱${amount.toLocaleString('en-PH', { 
+      minimumFractionDigits: 2, 
+      maximumFractionDigits: 2 
+    })}`;
   };
 
   const formatDate = (date: Date) =>
@@ -1062,9 +1063,14 @@ export default function Analytics({ loaderData }: Route.ComponentProps) {
                     <ResponsiveContainer width="100%" height={300}>
                       <ComposedChart data={orderMetricsData}>
                         <XAxis dataKey="month" />
-                        <YAxis yAxisId="left" />
+                        <YAxis yAxisId="left" tickFormatter={(value) => `₱${(value / 1000).toFixed(0)}K`} />
                         <YAxis yAxisId="right" orientation="right" />
-                        <Tooltip />
+                        <Tooltip formatter={(value: number, name: string) => {
+                          if (name === 'Revenue (₱)' || name === 'AOV (₱)') {
+                            return [`₱${value.toLocaleString()}`, name];
+                          }
+                          return [value.toLocaleString(), name];
+                        }} />
                         <Legend />
                         <Bar yAxisId="left" dataKey="revenue" fill="#3b82f6" name="Revenue (₱)" />
                         <Line yAxisId="right" type="monotone" dataKey="orders" stroke="#10b981" strokeWidth={2} name="Orders" />
@@ -1095,7 +1101,7 @@ export default function Analytics({ loaderData }: Route.ComponentProps) {
                             <Cell key={`cell-${index}`} fill={entry.color} />
                           ))}
                         </Pie>
-                        <Tooltip />
+                        <Tooltip formatter={(value: number) => [value.toLocaleString(), 'Count']} />
                         <Legend />
                       </PieChart>
                     </ResponsiveContainer>
@@ -1112,7 +1118,7 @@ export default function Analytics({ loaderData }: Route.ComponentProps) {
                       <BarChart data={paymentMethodData as any[]} layout="vertical">
                         <XAxis type="number" />
                         <YAxis type="category" dataKey="method" width={100} />
-                        <Tooltip />
+                        <Tooltip formatter={(value: number) => [value.toLocaleString(), 'Count']} />
                         <Bar dataKey="count" fill="#8b5cf6" />
                       </BarChart>
                     </ResponsiveContainer>
@@ -1153,7 +1159,7 @@ export default function Analytics({ loaderData }: Route.ComponentProps) {
                       <AreaChart data={userGrowthData}>
                         <XAxis dataKey="month" />
                         <YAxis />
-                        <Tooltip />
+                        <Tooltip formatter={(value: number) => [value.toLocaleString(), 'Users']} />
                         <Legend />
                         <Area type="monotone" dataKey="new" stackId="1" stroke="#3b82f6" fill="#3b82f6" name="New Users" />
                         <Area type="monotone" dataKey="returning" stackId="1" stroke="#10b981" fill="#10b981" name="Returning" />
@@ -1183,7 +1189,7 @@ export default function Analytics({ loaderData }: Route.ComponentProps) {
                             <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                           ))}
                         </Pie>
-                        <Tooltip />
+                        <Tooltip formatter={(value: number) => [value.toLocaleString(), 'Count']} />
                         <Legend />
                       </PieChart>
                     </ResponsiveContainer>
@@ -1201,7 +1207,7 @@ export default function Analytics({ loaderData }: Route.ComponentProps) {
                         <BarChart data={registrationStageData as any[]}>
                           <XAxis dataKey="stage" />
                           <YAxis />
-                          <Tooltip />
+                          <Tooltip formatter={(value: number) => [value.toLocaleString(), 'Count']} />
                           <Bar dataKey="count" fill="#3b82f6">
                             {registrationStageData.map((entry: RegistrationStage, index: number) => (
                               <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
@@ -1245,10 +1251,15 @@ export default function Analytics({ loaderData }: Route.ComponentProps) {
                   <CardContent>
                     <ResponsiveContainer width="100%" height={300}>
                       <BarChart data={productPerformanceData as any[]}>
-                        <XAxis dataKey="name" />
+                        <XAxis dataKey="name" angle={-45} textAnchor="end" height={80} interval={0} />
                         <YAxis yAxisId="left" />
                         <YAxis yAxisId="right" orientation="right" />
-                        <Tooltip />
+                        <Tooltip formatter={(value: number, name: string) => {
+                          if (name === 'Revenue (₱)') {
+                            return [`₱${value.toLocaleString()}`, name];
+                          }
+                          return [value.toLocaleString(), name];
+                        }} />
                         <Legend />
                         <Bar yAxisId="left" dataKey="orders" fill="#3b82f6" name="Orders" />
                         <Bar yAxisId="right" dataKey="revenue" fill="#10b981" name="Revenue (₱)" />
@@ -1265,9 +1276,9 @@ export default function Analytics({ loaderData }: Route.ComponentProps) {
                   <CardContent>
                     <ResponsiveContainer width="100%" height={250}>
                       <BarChart data={categoryPerformanceData as any[]} layout="vertical">
-                        <XAxis type="number" />
+                        <XAxis type="number" tickFormatter={(value) => `₱${(value / 1000).toFixed(0)}K`} />
                         <YAxis type="category" dataKey="category" width={100} />
-                        <Tooltip />
+                        <Tooltip formatter={(value: number) => [`₱${value.toLocaleString()}`, 'Revenue']} />
                         <Bar dataKey="revenue" fill="#f59e0b" />
                       </BarChart>
                     </ResponsiveContainer>
@@ -1295,7 +1306,7 @@ export default function Analytics({ loaderData }: Route.ComponentProps) {
                             <Cell key={`cell-${index}`} fill={entry.color} />
                           ))}
                         </Pie>
-                        <Tooltip />
+                        <Tooltip formatter={(value: number) => [value.toLocaleString(), 'Products']} />
                         <Legend />
                       </PieChart>
                     </ResponsiveContainer>
@@ -1337,7 +1348,12 @@ export default function Analytics({ loaderData }: Route.ComponentProps) {
                         <XAxis dataKey="month" />
                         <YAxis yAxisId="left" />
                         <YAxis yAxisId="right" orientation="right" />
-                        <Tooltip />
+                        <Tooltip formatter={(value: number, name: string) => {
+                          if (name === 'Followers') {
+                            return [value.toLocaleString(), name];
+                          }
+                          return [value.toLocaleString(), name];
+                        }} />
                         <Legend />
                         <Line yAxisId="left" type="monotone" dataKey="totalShops" stroke="#3b82f6" strokeWidth={2} name="Total Shops" />
                         <Line yAxisId="right" type="monotone" dataKey="followers" stroke="#10b981" strokeWidth={2} name="Followers" />
@@ -1354,9 +1370,9 @@ export default function Analytics({ loaderData }: Route.ComponentProps) {
                   <CardContent>
                     <ResponsiveContainer width="100%" height={250}>
                       <BarChart data={shopLocationData as any[]}>
-                        <XAxis dataKey="location" />
+                        <XAxis dataKey="location" angle={-45} textAnchor="end" height={80} interval={0} />
                         <YAxis />
-                        <Tooltip />
+                        <Tooltip formatter={(value: number) => [value.toLocaleString(), 'Shops']} />
                         <Bar dataKey="shops" fill="#8b5cf6" />
                       </BarChart>
                     </ResponsiveContainer>
@@ -1378,12 +1394,12 @@ export default function Analytics({ loaderData }: Route.ComponentProps) {
                             </div>
                             <div>
                               <p className="font-medium">{shop.name}</p>
-                              <p className="text-sm text-muted-foreground">{shop.followers} followers • {shop.products} products</p>
+                              <p className="text-sm text-muted-foreground">{shop.followers.toLocaleString()} followers • {shop.products} products</p>
                             </div>
                           </div>
                           <div className="text-right">
                             <p className="font-bold">{formatCurrency(shop.sales || 0)}</p>
-                            <p className="text-sm text-muted-foreground">{shop.rating}★ • {shop.orders} orders</p>
+                            <p className="text-sm text-muted-foreground">{shop.rating}★ • {shop.orders.toLocaleString()} orders</p>
                           </div>
                         </div>
                       ))}
