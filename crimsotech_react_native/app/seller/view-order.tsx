@@ -99,6 +99,7 @@ interface ShippingAddress {
   full_address: string;
   instructions?: string;
 }
+
 interface OrderDetails {
   order_id: string;
   shop_status?: string;
@@ -132,6 +133,7 @@ interface OrderDetails {
   proof_images?: ProofImage[];
   metadata?: {
     pickup_code?: string;
+    delivery_fees_by_shop?: Record<string, number>;
     all_riders_compared?: RiderAssignment[];
     nearest_rider?: {
       name: string;
@@ -394,17 +396,35 @@ export default function SellerViewOrder() {
   const handleUpdateStatus = async (actionType: string) => {
     setProcessing(true);
     try {
+      // Prepare request body
+      const requestBody: any = { action_type: actionType };
+
+      // If this is arrange_shipment, include the shipping_fee for this shop
+      if (actionType === "arrange_shipment" && order) {
+        // Get shipping fee from metadata.delivery_fees_by_shop or fallback to order.shipping_fee
+        const shippingFeeForShop =
+          order.metadata?.delivery_fees_by_shop?.[shopId as string] ||
+          order.shipping_fee;
+
+        if (shippingFeeForShop) {
+          requestBody.shipping_fee = shippingFeeForShop;
+          console.log(
+            `📦 Passing shipping_fee for shop ${shopId}: ₱${shippingFeeForShop}`,
+          );
+        }
+      }
+
       const response = await AxiosInstance.patch(
         `/seller-order-list/${orderId}/update_status/`,
-        { action_type: actionType },
+        requestBody,
         { params: { shop_id: shopId } },
       );
+
       if (response.data.success) {
         await fetchOrderDetails();
         await fetchAvailableActions();
         setShowConfirmation(false);
 
-        // If this was an arrange_shipment action, show the rider comparison modal
         if (
           actionType === "arrange_shipment" &&
           response.data.data?.all_riders_compared

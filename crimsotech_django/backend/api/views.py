@@ -26181,6 +26181,9 @@ class SellerOrderList(viewsets.ViewSet):
                     existing_delivery.save()
                     print(f"✅ Reset declined delivery to pending for order {order.order}")
                 
+                # Get shipping_fee from request body
+                shipping_fee_from_request = request.data.get('shipping_fee')
+                
                 available_riders = Rider.objects.filter(
                     verified=True, 
                     availability_status='available', 
@@ -26236,12 +26239,27 @@ class SellerOrderList(viewsets.ViewSet):
                     distance_to_pickup = self._calculate_driving_distance(rider_lat, rider_lng, pickup_lat, pickup_lng)
                     distance_pickup_to_dest = self._calculate_driving_distance(pickup_lat, pickup_lng, dest_lat, dest_lng)
                     total_distance = distance_to_pickup + distance_pickup_to_dest
+                    estimated_minutes = self._calculate_estimated_time(total_distance)
+                    
+                    # Determine delivery fee for this rider - USE SHIPPING FEE FROM REQUEST
+                    if shipping_fee_from_request is not None:
+                        delivery_fee = Decimal(str(shipping_fee_from_request))
+                        fee_source = "request_body"
+                        print(f"✅ Using shipping fee from request: ₱{delivery_fee}")
+                    else:
+                        delivery_fee = Decimal(str(self._calculate_delivery_fee(total_distance)))
+                        fee_source = "calculated_from_distance"
+                        print(f"⚠️ No shipping fee in request, calculated from distance: ₱{delivery_fee}")
                     
                     rider_distances.append({
                         'rider': rider,
                         'total_distance': total_distance,
                         'distance_to_pickup': distance_to_pickup,
-                        'distance_pickup_to_dest': distance_pickup_to_dest
+                        'distance_pickup_to_dest': distance_pickup_to_dest,
+                        'rider_lat': rider_lat,
+                        'rider_lng': rider_lng,
+                        'delivery_fee': delivery_fee,
+                        'estimated_minutes': estimated_minutes
                     })
                     
                     rider_name = f"{rider.rider.first_name} {rider.rider.last_name}".strip() or rider.rider.username
@@ -26252,7 +26270,9 @@ class SellerOrderList(viewsets.ViewSet):
                         'plate_number': rider.plate_number or 'N/A',
                         'distance_to_pickup_km': round(distance_to_pickup, 2),
                         'distance_pickup_to_dest_km': round(distance_pickup_to_dest, 2),
-                        'total_distance_km': round(total_distance, 2)
+                        'total_distance_km': round(total_distance, 2),
+                        'delivery_fee': float(delivery_fee),
+                        'estimated_minutes': estimated_minutes
                     })
                 
                 if not rider_distances:
@@ -26283,8 +26303,9 @@ class SellerOrderList(viewsets.ViewSet):
                 distance_to_pickup = nearest['distance_to_pickup']
                 distance_pickup_to_dest = nearest['distance_pickup_to_dest']
                 
-                delivery_fee = self._calculate_delivery_fee(total_distance)
-                estimated_minutes = self._calculate_estimated_time(total_distance)
+                # Use the delivery_fee already calculated
+                delivery_fee = nearest['delivery_fee']
+                estimated_minutes = nearest['estimated_minutes']
                 
                 # Check if there's an existing delivery for this shop (resetting declined one)
                 existing_delivery = Delivery.objects.filter(order=order, shop=shop).first()
@@ -26294,7 +26315,7 @@ class SellerOrderList(viewsets.ViewSet):
                     existing_delivery.status = 'pending'
                     existing_delivery.distance_km = Decimal(str(total_distance))
                     existing_delivery.estimated_minutes = estimated_minutes
-                    existing_delivery.delivery_fee = Decimal(str(delivery_fee))
+                    existing_delivery.delivery_fee = delivery_fee
                     existing_delivery.metadata = {
                         'distance_to_pickup': distance_to_pickup,
                         'distance_pickup_to_dest': distance_pickup_to_dest,
@@ -26302,11 +26323,12 @@ class SellerOrderList(viewsets.ViewSet):
                         'destination_location': {'lat': dest_lat, 'lng': dest_lng},
                         'all_riders_compared': rider_comparison,
                         'shop_id': str(shop.id),
+                        'fee_source': fee_source,
                         'nearest_rider': {
                             'name': f"{selected_rider.rider.first_name} {selected_rider.rider.last_name}".strip() or selected_rider.rider.username,
                             'username': selected_rider.rider.username,
                             'total_distance_km': round(total_distance, 2),
-                            'delivery_fee': delivery_fee,
+                            'delivery_fee': float(delivery_fee),
                             'estimated_minutes': estimated_minutes
                         }
                     }
@@ -26324,7 +26346,7 @@ class SellerOrderList(viewsets.ViewSet):
                         status='pending',
                         distance_km=Decimal(str(total_distance)),
                         estimated_minutes=estimated_minutes,
-                        delivery_fee=Decimal(str(delivery_fee)),
+                        delivery_fee=delivery_fee,
                         metadata={
                             'distance_to_pickup': distance_to_pickup,
                             'distance_pickup_to_dest': distance_pickup_to_dest,
@@ -26332,16 +26354,28 @@ class SellerOrderList(viewsets.ViewSet):
                             'destination_location': {'lat': dest_lat, 'lng': dest_lng},
                             'all_riders_compared': rider_comparison,
                             'shop_id': str(shop.id),
+                            'fee_source': fee_source,
                             'nearest_rider': {
                                 'name': f"{selected_rider.rider.first_name} {selected_rider.rider.last_name}".strip() or selected_rider.rider.username,
                                 'username': selected_rider.rider.username,
                                 'total_distance_km': round(total_distance, 2),
-                                'delivery_fee': delivery_fee,
+                                'delivery_fee': float(delivery_fee),
                                 'estimated_minutes': estimated_minutes
                             }
                         }
                     )
                     print(f"✅ Delivery created with ID={delivery.id}, shop_id={delivery.shop_id}")
+                
+                # Update checkout's shipping_fee to match
+                shop_checkouts = Checkout.objects.filter(
+                    Q(order=order, cart_item__product__shop=shop) |
+                    Q(order=order, direct_shop_id=str(shop.id))
+                )
+                for checkout in shop_checkouts:
+                    if checkout.shipping_fee != float(delivery_fee):
+                        checkout.shipping_fee = float(delivery_fee)
+                        checkout.save(update_fields=['shipping_fee'])
+                        print(f"✅ Updated checkout {checkout.id} shipping_fee to ₱{delivery_fee}")
                 
                 # Send notification to the new rider
                 Notification.objects.create(
@@ -26371,11 +26405,12 @@ class SellerOrderList(viewsets.ViewSet):
                         "shop_status": shop_status.status,
                         "rider_count": 1,
                         "pickup_location": pickup_name,
+                        "fee_source": fee_source,
                         "nearest_rider": {
                             "name": nearest_rider_name,
                             "username": selected_rider.rider.username,
                             "total_distance_km": round(total_distance, 2),
-                            "delivery_fee": delivery_fee,
+                            "delivery_fee": float(delivery_fee),
                             "estimated_minutes": estimated_minutes
                         },
                         "all_riders_compared": rider_comparison
