@@ -1187,6 +1187,7 @@ class Checkout(models.Model):
         null=True,
         blank=True,
     )
+    discount_applied = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
     direct_product_id = models.UUIDField(null=True, blank=True)
     direct_variant_id = models.UUIDField(null=True, blank=True)
     direct_product_name = models.CharField(max_length=500, null=True, blank=True)
