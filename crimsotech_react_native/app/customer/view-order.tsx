@@ -95,6 +95,7 @@ interface OrderSummary {
   total: string;
   payment_fee: string;
   transaction_fee?: string;
+  transaction_fee_per_shop?: Record<string, number | string>;
 }
 
 interface TimelineEvent {
@@ -128,6 +129,7 @@ interface OrderData {
     shop_id?: string;
     metadata?: {
       pickup_code?: string;
+      transaction_fee_per_shop?: Record<string, number>;
     };
     shop_statuses?: Record<string, string>;
   };
@@ -185,8 +187,8 @@ const formatDateTime = (dateString: string | null) => {
   });
 };
 
-const formatCurrency = (amount: string) => {
-  const numAmount = parseFloat(amount);
+const formatCurrency = (amount: string | number) => {
+  const numAmount = typeof amount === "string" ? parseFloat(amount) : amount;
   if (isNaN(numAmount)) return "₱0.00";
   return `₱${numAmount.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
@@ -199,10 +201,14 @@ type ShopItemGroup = {
   items: OrderItem[];
   subtotal: number;
   shippingFee: number;
+  transactionFee: number;
   total: number;
 };
 
-const groupItemsByShop = (items: OrderItem[]): ShopItemGroup[] => {
+const groupItemsByShop = (
+  items: OrderItem[],
+  transactionFeePerShop?: Record<string, number | string>,
+): ShopItemGroup[] => {
   const grouped = new Map<string, ShopItemGroup>();
 
   items.forEach((item) => {
@@ -215,13 +221,18 @@ const groupItemsByShop = (items: OrderItem[]): ShopItemGroup[] => {
     const shopPicture = item.shop_info?.picture || null;
     const subtotal = parseFloat(item.subtotal || "0") || 0;
     const shippingFee = parseFloat(item.shipping_fee || "0") || 0;
+    const transactionFee = transactionFeePerShop?.[shopId]
+      ? parseFloat(String(transactionFeePerShop[shopId]))
+      : 0;
 
     const existing = grouped.get(shopId);
     if (existing) {
       existing.items.push(item);
       existing.subtotal += subtotal;
       existing.shippingFee += shippingFee;
-      existing.total = existing.subtotal + existing.shippingFee;
+      existing.transactionFee = transactionFee;
+      existing.total =
+        existing.subtotal + existing.shippingFee + existing.transactionFee;
       return;
     }
 
@@ -233,7 +244,8 @@ const groupItemsByShop = (items: OrderItem[]): ShopItemGroup[] => {
       items: [item],
       subtotal,
       shippingFee,
-      total: subtotal + shippingFee,
+      transactionFee,
+      total: subtotal + shippingFee + transactionFee,
     });
   });
 
@@ -263,26 +275,11 @@ export default function ViewTrackOrderPage() {
   const _lastReviewedFetchKey = useRef<string | null>(null);
   const [cancellingItems, setCancellingItems] = useState(false);
   const [refundCountdown, setRefundCountdown] = useState<string | null>(null);
+  const getReviewedMapKey = (productId: string) =>
+    `${orderId || "unknown-order"}:${productId}`;
 
   const isFilteringByShop = !!filterShopId;
   const currentItems = orderData?.items || [];
-  const shopSpecificSubtotal = isFilteringByShop
-    ? currentItems.reduce(
-        (sum, item) => sum + parseFloat(item.subtotal || "0"),
-        0,
-      )
-    : 0;
-
-  const shopSpecificShippingFee = isFilteringByShop
-    ? currentItems.reduce(
-        (sum, item) => sum + parseFloat(item.shipping_fee || "0"),
-        0,
-      )
-    : 0;
-
-  const shopSpecificTotal = shopSpecificSubtotal;
-  const getReviewedMapKey = (productId: string) =>
-    `${orderId || "unknown-order"}:${productId}`;
 
   useEffect(() => {
     if (user?.id && orderId) {
@@ -363,38 +360,21 @@ export default function ViewTrackOrderPage() {
         data.timeline = Array.isArray(data.timeline) ? data.timeline : [];
 
         const rawSummary = data.order_summary || {};
-        const computedSubtotal = data.items
-          .reduce(
-            (sum: number, it: any) =>
-              sum + (parseFloat(it.subtotal || "0") || 0),
-            0,
-          )
-          .toFixed(2);
-        const subtotalStr = rawSummary.subtotal ?? computedSubtotal;
-        const discountStr = rawSummary.discount ?? "0";
-        const taxStr = rawSummary.tax ?? "0";
-        const totalStr =
-          rawSummary.total ??
-          (
-            parseFloat(subtotalStr || "0") +
-            parseFloat(discountStr || "0") +
-            parseFloat(taxStr || "0")
-          ).toFixed(2);
 
-        const shippingFeeStr = Math.min(
-          (parseFloat(totalStr || "0") - parseFloat(subtotalStr || "0")) * 0.05,
-          50,
-        ).toFixed(2);
+        // Get transaction fee per shop from order metadata
+        const transactionFeePerShop =
+          data.order?.metadata?.transaction_fee_per_shop || {};
 
         data.order_summary = {
-          subtotal: subtotalStr,
-          shipping_fee: rawSummary.shipping_fee ?? shippingFeeStr,
-          shipping_fees_breakdown: rawSummary.shipping_fees_breakdown,
-          tax: taxStr,
-          discount: discountStr,
-          total: totalStr,
-          transaction_fee: rawSummary.transaction_fee ?? "0",
-          payment_fee: rawSummary.payment_fee ?? "0",
+          subtotal: rawSummary.subtotal || "0",
+          shipping_fee: rawSummary.shipping_fee || "0",
+          shipping_fees_breakdown: rawSummary.shipping_fees_breakdown || {},
+          tax: rawSummary.tax || "0",
+          discount: rawSummary.discount || "0",
+          total: rawSummary.total || "0",
+          transaction_fee: rawSummary.transaction_fee || "0",
+          payment_fee: rawSummary.payment_fee || "0",
+          transaction_fee_per_shop: transactionFeePerShop,
         };
 
         data.summary_counts = data.summary_counts || {
@@ -1654,16 +1634,6 @@ export default function ViewTrackOrderPage() {
     return () => clearInterval(timer);
   }, [orderData?.order?.refund_expire_date]);
 
-  const handleReviewProduct = (productId: string) => {
-    router.push(
-      `/customer/order-review?productId=${productId}&orderId=${orderId}`,
-    );
-  };
-
-  const handleReturnProduct = (checkoutId: string) => {
-    // router.push(`/return/${checkoutId}?orderId=${orderId}`);
-  };
-
   const handleReturnItem = (
     checkoutId: string,
     productName: string,
@@ -1701,20 +1671,12 @@ export default function ViewTrackOrderPage() {
     });
   };
 
-  const handleContactSeller = (shopId: string) => {
-    router.push(`/customer/messages?shopId=${shopId}`);
-  };
-
   const handleTrackOrder = () => {
     if (!orderId) {
       Alert.alert("Error", "Order ID not available");
       return;
     }
     router.push(`/customer/components/shipping-timeline?orderId=${orderId}`);
-  };
-
-  const handleBuyAgain = (productId: string) => {
-    // router.push(`/product/${productId}`);
   };
 
   const handleReceiveItem = async (checkoutId: string, shopId: string) => {
@@ -1796,23 +1758,14 @@ export default function ViewTrackOrderPage() {
 
   const orderStatusLower = String(order?.status || "").toLowerCase();
 
-  const groupedItemsByShop = !isFilteringByShop ? groupItemsByShop(items) : [];
+  const transactionFeePerShop = order_summary.transaction_fee_per_shop || {};
+  const groupedItemsByShop = !isFilteringByShop
+    ? groupItemsByShop(items, transactionFeePerShop)
+    : [];
   const isSingleShop = isFilteringByShop || groupedItemsByShop.length === 1;
   const currentShopName = isFilteringByShop
     ? filterShopName
     : groupedItemsByShop[0]?.shopName || null;
-
-  const hasActions = () => {
-    return (
-      actions.can_cancel ||
-      (orderStatusLower === "rider_assigned" &&
-        order?.delivery_status?.toLowerCase() === "pending") ||
-      orderStatusLower === "delivered" ||
-      orderStatusLower === "picked_up" ||
-      orderStatusLower === "completed" ||
-      orderStatusLower === "partially_delivered"
-    );
-  };
 
   return (
     <View style={styles.container}>
@@ -2408,144 +2361,105 @@ export default function ViewTrackOrderPage() {
             </View>
 
             <View style={styles.groupItemsContainer}>
-              {items.map((item) => (
-                <View
-                  key={item.checkout_id}
-                  style={[
-                    styles.groupItemRow,
-                    item.shop_status === "cancelled" &&
-                      styles.cancelledProductCard,
-                  ]}
-                >
-                  <Image
-                    source={{
-                      uri:
-                        item.primary_image?.url ||
-                        "https://via.placeholder.com/80",
-                    }}
-                    style={[
-                      styles.groupItemImage,
-                      item.shop_status === "cancelled" && styles.cancelledImage,
-                    ]}
-                  />
-                  <View style={styles.groupItemDetails}>
-                    <Text
-                      style={[
-                        styles.groupItemName,
-                        item.shop_status === "cancelled" &&
-                          styles.cancelledText,
-                      ]}
-                      numberOfLines={2}
-                    >
-                      {item.product_name}
-                    </Text>
-                    <Text
-                      style={[
-                        styles.groupItemMeta,
-                        item.shop_status === "cancelled" &&
-                          styles.cancelledText,
-                      ]}
-                      numberOfLines={1}
-                    >
-                      {item.product_variant}
-                    </Text>
-                    <Text
-                      style={[
-                        styles.groupItemMeta,
-                        item.shop_status === "cancelled" &&
-                          styles.cancelledText,
-                      ]}
-                    >
-                      Quantity: {formatNumber(item.quantity)}
-                    </Text>
+              {items.map((item) => {
+                const shopId = item.shop_info?.id;
+                const transactionFee = transactionFeePerShop[shopId]
+                  ? parseFloat(String(transactionFeePerShop[shopId]))
+                  : 0;
+                const subtotal = parseFloat(item.subtotal) || 0;
+                const shippingFee = parseFloat(item.shipping_fee || "0") || 0;
+                const itemTotal = subtotal + shippingFee + transactionFee;
 
-                    {item.shop_status && (
+                return (
+                  <View
+                    key={item.checkout_id}
+                    style={[
+                      styles.groupItemRow,
+                      item.shop_status === "cancelled" &&
+                        styles.cancelledProductCard,
+                    ]}
+                  >
+                    <Image
+                      source={{
+                        uri:
+                          item.primary_image?.url ||
+                          "https://via.placeholder.com/80",
+                      }}
+                      style={[
+                        styles.groupItemImage,
+                        item.shop_status === "cancelled" &&
+                          styles.cancelledImage,
+                      ]}
+                    />
+                    <View style={styles.groupItemDetails}>
                       <Text
                         style={[
-                          styles.groupItemStatus,
-                          item.shop_status === "delivered" && {
-                            color: "#10B981",
-                          },
-                          item.shop_status === "completed" && {
-                            color: "#10B981",
-                          },
-                          item.shop_status === "shipped" && {
-                            color: "#3B82F6",
-                          },
-                          item.shop_status === "ready" && {
-                            color: "#3B82F6",
-                          },
-                          item.shop_status === "to_deliver" && {
-                            color: "#8B5CF6",
-                          },
-                          item.shop_status === "rider_assigned" && {
-                            color: "#8B5CF6",
-                          },
-                          item.shop_status === "pending" && {
-                            color: "#F59E0B",
-                          },
-                          item.shop_status === "processing" && {
-                            color: "#F59E0B",
-                          },
-                          item.shop_status === "confirmed" && {
-                            color: "#10B981",
-                          },
-                          item.shop_status === "cancelled" && {
-                            color: "#EF4444",
-                          },
+                          styles.groupItemName,
+                          item.shop_status === "cancelled" &&
+                            styles.cancelledText,
                         ]}
+                        numberOfLines={2}
                       >
-                        Status:{" "}
-                        {item.shop_status.charAt(0).toUpperCase() +
-                          item.shop_status.slice(1).replace(/_/g, " ")}
+                        {item.product_name}
                       </Text>
-                    )}
-                  </View>
-                  <View style={styles.groupItemPriceContainer}>
-                    <Text
-                      style={[
-                        styles.currentPrice,
-                        item.shop_status === "cancelled" &&
-                          styles.cancelledPrice,
-                      ]}
-                    >
-                      {formatCurrency(item.price)}
-                    </Text>
-                    <Text
-                      style={[
-                        styles.groupItemSubtotal,
-                        item.shop_status === "cancelled" &&
-                          styles.cancelledText,
-                      ]}
-                    >
-                      Subtotal: {formatCurrency(item.subtotal)}
-                    </Text>
-                    {item.shipping_fee && parseFloat(item.shipping_fee) > 0 && (
                       <Text
                         style={[
-                          styles.groupItemSubtotal,
+                          styles.groupItemMeta,
+                          item.shop_status === "cancelled" &&
+                            styles.cancelledText,
+                        ]}
+                        numberOfLines={1}
+                      >
+                        {item.product_variant}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.groupItemMeta,
                           item.shop_status === "cancelled" &&
                             styles.cancelledText,
                         ]}
                       >
-                        Shipping: {formatCurrency(item.shipping_fee)}
+                        Quantity: {formatNumber(item.quantity)}
                       </Text>
-                    )}
-                    {item.value_added_tax_amount &&
-                      parseFloat(item.value_added_tax_amount) > 0 && (
+
+                      {item.shop_status && (
                         <Text
                           style={[
-                            styles.groupItemSubtotal,
-                            item.shop_status === "cancelled" &&
-                              styles.cancelledText,
+                            styles.groupItemStatus,
+                            item.shop_status === "delivered" && {
+                              color: "#10B981",
+                            },
+                            item.shop_status === "completed" && {
+                              color: "#10B981",
+                            },
+                            item.shop_status === "shipped" && {
+                              color: "#3B82F6",
+                            },
+                            item.shop_status === "pending" && {
+                              color: "#F59E0B",
+                            },
+                            item.shop_status === "cancelled" && {
+                              color: "#EF4444",
+                            },
                           ]}
                         >
-                          VAT: {formatCurrency(item.value_added_tax_amount)}
+                          Status:{" "}
+                          {item.shop_status.charAt(0).toUpperCase() +
+                            item.shop_status.slice(1).replace(/_/g, " ")}
                         </Text>
                       )}
+                    </View>
+                    <View style={styles.groupItemPriceContainer}>
+                      <Text style={styles.currentPrice}>
+                        {formatCurrency(item.price)}
+                      </Text>
+                      <Text style={styles.groupItemSubtotal}>
+                        {formatCurrency(item.subtotal)}
+                      </Text>
+                    </View>
                   </View>
-                </View>
-              ))}
+                );
+              })}
             </View>
           </View>
         ) : (
@@ -2594,15 +2508,6 @@ export default function ViewTrackOrderPage() {
                           color="#9CA3AF"
                         />
                       </View>
-                      <Text style={styles.followerText}>
-                        {group.items.length} item
-                        {group.items.length > 1 ? "s" : ""} • Subtotal:{" "}
-                        {formatCurrency(group.subtotal.toString())}
-                      </Text>
-                      <Text style={styles.followerText}>
-                        Shipping: {formatCurrency(group.shippingFee.toString())}{" "}
-                        • Total: {formatCurrency(group.total.toString())}
-                      </Text>
                     </View>
                   </TouchableOpacity>
 
@@ -2672,23 +2577,8 @@ export default function ViewTrackOrderPage() {
                                 item.shop_status === "shipped" && {
                                   color: "#3B82F6",
                                 },
-                                item.shop_status === "ready" && {
-                                  color: "#3B82F6",
-                                },
-                                item.shop_status === "to_deliver" && {
-                                  color: "#8B5CF6",
-                                },
-                                item.shop_status === "rider_assigned" && {
-                                  color: "#8B5CF6",
-                                },
                                 item.shop_status === "pending" && {
                                   color: "#F59E0B",
-                                },
-                                item.shop_status === "processing" && {
-                                  color: "#F59E0B",
-                                },
-                                item.shop_status === "confirmed" && {
-                                  color: "#10B981",
                                 },
                                 item.shop_status === "cancelled" && {
                                   color: "#EF4444",
@@ -2704,27 +2594,27 @@ export default function ViewTrackOrderPage() {
                           {(item.shop_status === "delivered" ||
                             item.shop_status === "completed") && (
                             <View style={styles.itemActionButtonsContainer}>
-                              {(item.shop_status === "delivered" ||
-                                item.item_status === "delivered") && (
-                                <TouchableOpacity
-                                  style={styles.receiveItemButton}
-                                  onPress={() =>
-                                    handleReceiveItem(
-                                      item.checkout_id,
-                                      item.shop_info?.id,
-                                    )
-                                  }
-                                >
-                                  <MaterialIcons
-                                    name="check-circle"
-                                    size={14}
-                                    color="#FFFFFF"
-                                  />
-                                  <Text style={styles.receiveItemButtonText}>
-                                    Mark as Received
-                                  </Text>
-                                </TouchableOpacity>
-                              )}
+                              {item.shop_status === "delivered" ||
+                                (item.shop_status === "completed" && (
+                                  <TouchableOpacity
+                                    style={styles.receiveItemButton}
+                                    onPress={() =>
+                                      handleReceiveItem(
+                                        item.checkout_id,
+                                        item.shop_info?.id,
+                                      )
+                                    }
+                                  >
+                                    <MaterialIcons
+                                      name="check-circle"
+                                      size={14}
+                                      color="#FFFFFF"
+                                    />
+                                    <Text style={styles.receiveItemButtonText}>
+                                      Mark as Received
+                                    </Text>
+                                  </TouchableOpacity>
+                                ))}
 
                               {item.can_return && item.is_refundable && (
                                 <TouchableOpacity
@@ -2783,42 +2673,43 @@ export default function ViewTrackOrderPage() {
                                 styles.cancelledText,
                             ]}
                           >
-                            Subtotal: {formatCurrency(item.subtotal)}
+                            {formatCurrency(item.subtotal)}
                           </Text>
-                          {item.shipping_fee &&
-                            parseFloat(item.shipping_fee) > 0 && (
-                              <Text
-                                style={[
-                                  styles.groupItemSubtotal,
-                                  item.shop_status === "cancelled" &&
-                                    styles.cancelledText,
-                                ]}
-                              >
-                                Shipping: {formatCurrency(item.shipping_fee)}
-                              </Text>
-                            )}
-                          {item.value_added_tax_amount &&
-                            parseFloat(item.value_added_tax_amount) > 0 && (
-                              <Text
-                                style={[
-                                  styles.groupItemSubtotal,
-                                  item.shop_status === "cancelled" &&
-                                    styles.cancelledText,
-                                ]}
-                              >
-                                VAT:{" "}
-                                {formatCurrency(item.value_added_tax_amount)}
-                              </Text>
-                            )}
                         </View>
                       </View>
                     ))}
                   </View>
-                  <View style={styles.shopTotalRow}>
-                    <Text style={styles.shopTotalLabel}>Shop Total:</Text>
-                    <Text style={styles.shopTotalValue}>
-                      {formatCurrency(group.total.toString())}
-                    </Text>
+
+                  {/* Shop Summary Row */}
+                  <View style={styles.shopSummaryContainer}>
+                    <View style={styles.shopSummaryRow}>
+                      <Text style={styles.shopSummaryLabel}>Subtotal</Text>
+                      <Text style={styles.shopSummaryValue}>
+                        {formatCurrency(group.subtotal)}
+                      </Text>
+                    </View>
+                    <View style={styles.shopSummaryRow}>
+                      <Text style={styles.shopSummaryLabel}>Shipping Fee</Text>
+                      <Text style={styles.shopSummaryValue}>
+                        {formatCurrency(group.shippingFee)}
+                      </Text>
+                    </View>
+                    {group.transactionFee > 0 && (
+                      <View style={styles.shopSummaryRow}>
+                        <Text style={styles.shopSummaryLabel}>
+                          Transaction Fee
+                        </Text>
+                        <Text style={styles.shopSummaryValue}>
+                          {formatCurrency(group.transactionFee)}
+                        </Text>
+                      </View>
+                    )}
+                    <View style={styles.shopTotalRow}>
+                      <Text style={styles.shopTotalLabel}>Shop Total</Text>
+                      <Text style={styles.shopTotalValue}>
+                        {formatCurrency(group.total)}
+                      </Text>
+                    </View>
                   </View>
                 </View>
               ))}
@@ -2826,6 +2717,7 @@ export default function ViewTrackOrderPage() {
           </View>
         )}
 
+        {/* Global Order Summary */}
         <View style={styles.summaryCard}>
           <Text style={styles.summaryTitle}>
             {isFilteringByShop
@@ -2833,145 +2725,228 @@ export default function ViewTrackOrderPage() {
               : "Order Summary"}
           </Text>
 
-          {isFilteringByShop ? (
-            <>
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>
-                  Subtotal ({formatNumber(items.length)} items):
-                </Text>
-                <Text style={styles.summaryValue}>
-                  {formatCurrency(formatNumber(items.length))}
-                </Text>
-              </View>
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Transaction Fee:</Text>
-                <Text style={styles.summaryValue}>
-                  {formatCurrency(order_summary.transaction_fee || "0")}
-                </Text>
-              </View>
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Shipping Fee:</Text>
-                <Text style={styles.summaryValue}>
-                  {formatCurrency(shopSpecificShippingFee.toString())}
-                </Text>
-              </View>
-              {items.reduce(
-                (sum, item) =>
-                  sum + parseFloat(item.value_added_tax_amount || "0"),
-                0,
-              ) > 0 && (
-                <View style={styles.summaryRow}>
-                  <Text style={styles.summaryLabel}>VAT:</Text>
-                  <Text style={styles.summaryValue}>
-                    {formatCurrency(
-                      items
-                        .reduce(
-                          (sum, item) =>
-                            sum +
-                            parseFloat(item.value_added_tax_amount || "0"),
+          {isFilteringByShop
+            ? // Shop-specific summary
+              (() => {
+                const shopId = filterShopId as string;
+                const shopItems = items;
+                const totalItemPrice = shopItems.reduce(
+                  (sum, item) =>
+                    sum + parseFloat(item.price || "0") * item.quantity,
+                  0,
+                );
+                const shopShippingFee = shopItems.reduce(
+                  (sum, item) => sum + parseFloat(item.shipping_fee || "0"),
+                  0,
+                );
+                const shopVAT = shopItems.reduce(
+                  (sum, item) =>
+                    sum + parseFloat(item.value_added_tax_amount || "0"),
+                  0,
+                );
+                const shopTransactionFee = transactionFeePerShop[shopId]
+                  ? parseFloat(String(transactionFeePerShop[shopId]))
+                  : 0;
+                const shopTotal =
+                  totalItemPrice + shopShippingFee + shopTransactionFee;
+
+                return (
+                  <>
+                    <View style={styles.summaryRow}>
+                      <Text style={styles.summaryLabel}>
+                        Item price (
+                        {shopItems.reduce(
+                          (sum, item) => sum + item.quantity,
                           0,
-                        )
-                        .toString(),
-                    )}
-                  </Text>
-                </View>
-              )}
-              <View style={[styles.summaryRow, styles.totalRow]}>
-                <Text style={styles.totalLabel}>Total for this shop</Text>
-                <Text style={styles.totalValue}>
-                  {formatCurrency(shopSpecificTotal.toString())}
-                </Text>
-              </View>
-            </>
-          ) : (
-            <>
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>
-                  Subtotal ({formatNumber(orderData.summary_counts.total_items)}{" "}
-                  items):
-                </Text>
-                <Text style={styles.summaryValue}>
-                  {formatCurrency(order_summary.subtotal)}
-                </Text>
-              </View>
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Shipping Fee:</Text>
-                <Text style={styles.summaryValue}>
-                  {formatCurrency(order_summary.shipping_fee)}
-                </Text>
-              </View>
+                        )}{" "}
+                        items):
+                      </Text>
+                      <Text style={styles.summaryValue}>
+                        {formatCurrency(totalItemPrice)}
+                      </Text>
+                    </View>
 
-              {order_summary.shipping_fees_breakdown &&
-                typeof order_summary.shipping_fees_breakdown === "object" &&
-                Object.keys(order_summary.shipping_fees_breakdown).length >
-                  0 && (
-                  <View style={styles.shippingBreakdownContainer}>
-                    <Text style={styles.breakdownTitle}>
-                      Breakdown by Shop:
-                    </Text>
-                    {Object.entries(order_summary.shipping_fees_breakdown).map(
-                      ([shopId, fee], index) => {
-                        const shopName =
-                          orderData?.items.find(
-                            (item) =>
-                              item.shop_info?.id === shopId ||
-                              item.shop_info?.id?.toString() ===
-                                shopId?.toString(),
-                          )?.shop_info?.name || `Shop ${shopId}`;
+                    <View style={styles.summaryRow}>
+                      <Text style={styles.summaryLabel}>Shipping Fee:</Text>
+                      <Text style={styles.summaryValue}>
+                        {formatCurrency(shopShippingFee)}
+                      </Text>
+                    </View>
 
-                        return (
-                          <View
-                            key={`${shopId}-${index}`}
-                            style={styles.breakdownRow}
-                          >
-                            <Text style={styles.breakdownLabel}>
-                              {shopName}:
-                            </Text>
-                            <Text style={styles.breakdownValue}>
-                              {formatCurrency(fee.toString())}
-                            </Text>
-                          </View>
-                        );
-                      },
+                    {shopVAT > 0 && (
+                      <View style={styles.summaryRow}>
+                        <Text style={styles.summaryLabel}>
+                          Value Added Tax (VAT):
+                        </Text>
+                        <Text style={styles.summaryValue}>
+                          {formatCurrency(shopVAT)}
+                        </Text>
+                      </View>
                     )}
-                  </View>
-                )}
-              {parseFloat(order_summary.tax || "0") > 0 && (
-                <View style={styles.summaryRow}>
-                  <Text style={styles.summaryLabel}>
-                    Value Added Tax (VAT):
-                  </Text>
-                  <Text style={styles.summaryValue}>
-                    {formatCurrency(order_summary.tax)}
-                  </Text>
-                </View>
-              )}
-              {parseFloat(order_summary.transaction_fee || "0") > 0 && (
-                <View style={styles.summaryRow}>
-                  <Text style={styles.summaryLabel}>Transaction Fee:</Text>
-                  <Text style={styles.summaryValue}>
-                    {formatCurrency(order_summary.transaction_fee || "0")}
-                  </Text>
-                </View>
-              )}
-              {parseFloat(order_summary.discount) > 0 && (
-                <View style={styles.summaryRow}>
-                  <Text style={styles.summaryLabel}>Discount:</Text>
-                  <Text style={[styles.summaryValue, styles.discountText]}>
-                    -{formatCurrency(order_summary.discount)}
-                  </Text>
-                </View>
-              )}
-              <View style={styles.totalRow}>
-                <Text style={styles.totalLabel}>Total</Text>
-                <Text style={styles.totalValue}>
-                  {formatCurrency(order_summary.total)}
-                </Text>
-              </View>
-            </>
-          )}
+
+                    {shopTransactionFee > 0 && (
+                      <View style={styles.summaryRow}>
+                        <Text style={styles.summaryLabel}>
+                          Transaction Fee:
+                        </Text>
+                        <Text style={styles.summaryValue}>
+                          {formatCurrency(shopTransactionFee)}
+                        </Text>
+                      </View>
+                    )}
+
+                    <View style={[styles.summaryRow, styles.totalRow]}>
+                      <Text style={styles.totalLabel}>Total for this shop</Text>
+                      <Text style={styles.totalValue}>
+                        {formatCurrency(shopTotal)}
+                      </Text>
+                    </View>
+                  </>
+                );
+              })()
+            : // Global order summary
+              (() => {
+                // Calculate total item price (price × quantity for all items)
+                const totalItemPrice = items.reduce(
+                  (sum, item) =>
+                    sum + parseFloat(item.price || "0") * item.quantity,
+                  0,
+                );
+
+                return (
+                  <>
+                    <View style={styles.summaryRow}>
+                      <Text style={styles.summaryLabel}>
+                        Item price ({orderData.summary_counts.total_items}{" "}
+                        items):
+                      </Text>
+                      <Text style={styles.summaryValue}>
+                        {formatCurrency(totalItemPrice)}
+                      </Text>
+                    </View>
+
+                    <View style={styles.summaryRow}>
+                      <Text style={styles.summaryLabel}>Shipping Fee:</Text>
+                      <Text style={styles.summaryValue}>
+                        {formatCurrency(order_summary.shipping_fee)}
+                      </Text>
+                    </View>
+
+                    {order_summary.shipping_fees_breakdown &&
+                      Object.keys(order_summary.shipping_fees_breakdown)
+                        .length > 0 && (
+                        <View style={styles.shippingBreakdownContainer}>
+                          <Text style={styles.breakdownTitle}>
+                            Breakdown by Shop:
+                          </Text>
+                          {Object.entries(
+                            order_summary.shipping_fees_breakdown,
+                          ).map(([shopId, fee], index) => {
+                            const shopName =
+                              orderData?.items.find(
+                                (item) => item.shop_info?.id === shopId,
+                              )?.shop_info?.name ||
+                              `Shop ${shopId.slice(0, 8)}`;
+                            return (
+                              <View
+                                key={`${shopId}-${index}`}
+                                style={styles.breakdownRow}
+                              >
+                                <Text style={styles.breakdownLabel}>
+                                  {shopName}:
+                                </Text>
+                                <Text style={styles.breakdownValue}>
+                                  {formatCurrency(fee)}
+                                </Text>
+                              </View>
+                            );
+                          })}
+                        </View>
+                      )}
+
+                    {/* VAT - Global (from order_summary.tax) */}
+                    {parseFloat(order_summary.tax || "0") > 0 && (
+                      <View style={styles.summaryRow}>
+                        <Text style={styles.summaryLabel}>
+                          Value Added Tax (VAT):
+                        </Text>
+                        <Text style={styles.summaryValue}>
+                          {formatCurrency(order_summary.tax)}
+                        </Text>
+                      </View>
+                    )}
+
+                    {/* Transaction Fee - Global */}
+                    {parseFloat(order_summary.transaction_fee || "0") > 0 && (
+                      <>
+                        <View style={styles.summaryRow}>
+                          <Text style={styles.summaryLabel}>
+                            Transaction Fee:
+                          </Text>
+                          <Text style={styles.summaryValue}>
+                            {formatCurrency(
+                              order_summary.transaction_fee || "0",
+                            )}
+                          </Text>
+                        </View>
+
+                        {/* Transaction Fee per shop breakdown */}
+                        {transactionFeePerShop &&
+                          Object.keys(transactionFeePerShop).length > 0 && (
+                            <View style={styles.shippingBreakdownContainer}>
+                              <Text style={styles.breakdownTitle}>
+                                Transaction Fee by Shop:
+                              </Text>
+                              {Object.entries(transactionFeePerShop).map(
+                                ([shopId, fee], index) => {
+                                  const shopName =
+                                    orderData?.items.find(
+                                      (item) => item.shop_info?.id === shopId,
+                                    )?.shop_info?.name ||
+                                    `Shop ${shopId.slice(0, 8)}`;
+                                  return (
+                                    <View
+                                      key={`txn-${shopId}-${index}`}
+                                      style={styles.breakdownRow}
+                                    >
+                                      <Text style={styles.breakdownLabel}>
+                                        {shopName}:
+                                      </Text>
+                                      <Text style={styles.breakdownValue}>
+                                        {formatCurrency(fee)}
+                                      </Text>
+                                    </View>
+                                  );
+                                },
+                              )}
+                            </View>
+                          )}
+                      </>
+                    )}
+
+                    {parseFloat(order_summary.discount) > 0 && (
+                      <View style={styles.summaryRow}>
+                        <Text style={styles.summaryLabel}>Discount:</Text>
+                        <Text
+                          style={[styles.summaryValue, styles.discountText]}
+                        >
+                          -{formatCurrency(order_summary.discount)}
+                        </Text>
+                      </View>
+                    )}
+
+                    <View style={styles.totalRow}>
+                      <Text style={styles.totalLabel}>Total</Text>
+                      <Text style={styles.totalValue}>
+                        {formatCurrency(order_summary.total)}
+                      </Text>
+                    </View>
+                  </>
+                );
+              })()}
         </View>
 
+        {/* Order Information */}
         <View style={styles.infoCard}>
           <View style={styles.infoRow}>
             <Text style={styles.infoLabel}>Order Number:</Text>
@@ -3009,7 +2984,7 @@ export default function ViewTrackOrderPage() {
           </View>
         </View>
       </ScrollView>
-
+      {/* Sticky Action Buttons */}
       {(() => {
         const currentShopStatus =
           isFilteringByShop && filterShopId
@@ -3017,9 +2992,14 @@ export default function ViewTrackOrderPage() {
             : null;
 
         const showOrderReceivedForShop =
-          isFilteringByShop && currentShopStatus === "delivered";
+          isFilteringByShop &&
+          (currentShopStatus === "delivered" ||
+            currentShopStatus === "picked_up");
+
         const showCompletedActionsForShop =
-          isFilteringByShop && currentShopStatus === "completed";
+          isFilteringByShop &&
+          (currentShopStatus === "completed" ||
+            currentShopStatus === "delivered");
 
         const showOrderReceivedForOrder =
           !isFilteringByShop &&
@@ -3027,11 +3007,7 @@ export default function ViewTrackOrderPage() {
             orderStatusLower === "picked_up" ||
             orderStatusLower === "partially_delivered");
 
-        const showCancelForOrder =
-          !isFilteringByShop &&
-          (actions.can_cancel ||
-            (orderStatusLower === "rider_assigned" &&
-              order?.delivery_status?.toLowerCase() === "pending"));
+        const showCancelForOrder = !isFilteringByShop && actions.can_cancel;
 
         const showRefundRateForOrder =
           !isFilteringByShop &&
@@ -3390,44 +3366,6 @@ const styles = StyleSheet.create({
     flex: 1,
   },
 
-  timelineContainer: {
-    paddingLeft: 28,
-  },
-  timelineItem: {
-    flexDirection: "row",
-    marginBottom: 16,
-  },
-  timelineDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    marginTop: 4,
-    marginRight: 12,
-  },
-  timelineContent: {
-    flex: 1,
-  },
-  timelineEvent: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#111827",
-  },
-  timelineDescription: {
-    fontSize: 12,
-    color: "#6B7280",
-    marginTop: 2,
-  },
-  timelineDate: {
-    fontSize: 11,
-    color: "#9CA3AF",
-    marginTop: 2,
-  },
-
-  productCard: {
-    backgroundColor: "#FFF",
-    padding: 16,
-    marginTop: 10,
-  },
   shopGroupsContainer: {
     marginTop: 10,
   },
@@ -3470,33 +3408,6 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     fontSize: 15,
     marginRight: 5,
-  },
-  choicesBadge: {
-    backgroundColor: "#333",
-    paddingHorizontal: 4,
-    borderRadius: 3,
-    marginRight: 4,
-  },
-  badgeText: {
-    color: "#FFF",
-    fontSize: 10,
-    fontWeight: "bold",
-    fontStyle: "italic",
-  },
-  newBadge: {
-    borderWidth: 1,
-    borderColor: "#10B981",
-    paddingHorizontal: 4,
-    borderRadius: 3,
-    marginRight: 4,
-  },
-  newBadgeText: {
-    color: "#10B981",
-    fontSize: 10,
-  },
-  followerText: {
-    fontSize: 12,
-    color: "#6B7280",
   },
   groupItemsContainer: {
     marginTop: 6,
@@ -3541,131 +3452,55 @@ const styles = StyleSheet.create({
     minWidth: 96,
   },
   groupItemSubtotal: {
-    fontSize: 11,
+    fontSize: 12,
     color: "#374151",
     fontWeight: "600",
-    marginTop: 6,
+    marginTop: 4,
     textAlign: "right",
-  },
-  productBody: {
-    flexDirection: "row",
-    marginBottom: 12,
-  },
-  productImage: {
-    width: 80,
-    height: 100,
-    borderRadius: 4,
-  },
-  productDetails: {
-    flex: 1,
-    paddingHorizontal: 10,
-  },
-  productName: {
-    fontSize: 14,
-    color: "#374151",
-    lineHeight: 20,
-  },
-  productVariant: {
-    fontSize: 13,
-    color: "#6B7280",
-    marginTop: 4,
-  },
-  productQuantity: {
-    fontSize: 13,
-    color: "#6B7280",
-    marginTop: 4,
-  },
-  priceContainer: {
-    alignItems: "flex-end",
-  },
-  priceRow: {
-    flexDirection: "row",
-    alignItems: "center",
   },
   currentPrice: {
     fontWeight: "bold",
     fontSize: 14,
     color: "#F97316",
-    marginRight: 4,
+    marginBottom: 4,
   },
-  oldPrice: {
-    fontSize: 12,
-    color: "#9CA3AF",
-    textDecorationLine: "line-through",
-    marginTop: 4,
+  shopSummaryContainer: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: "#E5E7EB",
   },
-  subtotal: {
-    fontSize: 12,
+  shopSummaryRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 8,
+  },
+  shopSummaryLabel: {
+    fontSize: 13,
+    color: "#6B7280",
+  },
+  shopSummaryValue: {
+    fontSize: 13,
     color: "#111827",
-    fontWeight: "600",
-    marginTop: 8,
+    fontWeight: "500",
   },
-
-  productActions: {
+  shopTotalRow: {
     flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-    marginTop: 8,
+    justifyContent: "space-between",
+    marginTop: 4,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: "#E5E7EB",
   },
-  reviewButton: {
-    backgroundColor: "#F97316",
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 6,
-  },
-  reviewButtonText: {
-    color: "#FFFFFF",
-    fontSize: 12,
+  shopTotalLabel: {
+    fontSize: 14,
     fontWeight: "600",
-    marginLeft: 4,
+    color: "#111827",
   },
-  returnButton: {
-    backgroundColor: "#EF4444",
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 6,
-  },
-  returnButtonText: {
-    color: "#FFFFFF",
-    fontSize: 12,
-    fontWeight: "600",
-    marginLeft: 4,
-  },
-  chatButton: {
-    backgroundColor: "#FFFFFF",
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: "#3B82F6",
-  },
-  chatButtonText: {
-    color: "#3B82F6",
-    fontSize: 12,
-    fontWeight: "600",
-    marginLeft: 4,
-  },
-  buyAgainButton: {
-    backgroundColor: "#FFFFFF",
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: "#D1D5DB",
-  },
-  buyAgainButtonText: {
-    color: "#000000",
-    fontSize: 12,
-    fontWeight: "600",
-    marginLeft: 4,
+  shopTotalValue: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#F97316",
   },
 
   summaryCard: {
@@ -3715,10 +3550,9 @@ const styles = StyleSheet.create({
     color: "#111827",
   },
   shippingBreakdownContainer: {
-    marginTop: 12,
+    marginTop: 8,
     marginBottom: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    padding: 10,
     backgroundColor: "#F9FAFB",
     borderRadius: 8,
     borderWidth: 1,
@@ -3733,25 +3567,16 @@ const styles = StyleSheet.create({
   breakdownRow: {
     flexDirection: "row",
     justifyContent: "space-between",
-    paddingVertical: 6,
-    paddingHorizontal: 8,
-    backgroundColor: "#FFFFFF",
-    borderRadius: 4,
-    marginBottom: 6,
-    borderWidth: 0.5,
-    borderColor: "#E5E7EB",
+    paddingVertical: 4,
   },
   breakdownLabel: {
     fontSize: 12,
     color: "#374151",
-    fontWeight: "500",
-    flex: 1,
   },
   breakdownValue: {
     fontSize: 12,
     color: "#111827",
-    fontWeight: "600",
-    textAlign: "right",
+    fontWeight: "500",
   },
 
   infoRow: {
@@ -3776,7 +3601,8 @@ const styles = StyleSheet.create({
 
   actionButtonsContainer: {
     flexDirection: "row",
-    padding: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
     gap: 12,
   },
   rateModalOverlay: {
@@ -3820,9 +3646,6 @@ const styles = StyleSheet.create({
     borderColor: "#E5E7EB",
     backgroundColor: "#F9FAFB",
     marginBottom: 10,
-  },
-  rateItemRowDisabled: {
-    opacity: 0.55,
   },
   rateItemImage: {
     width: 56,
@@ -3890,18 +3713,6 @@ const styles = StyleSheet.create({
   },
   cancelOrderButtonText: {
     color: "#EF4444",
-    fontSize: 14,
-    fontWeight: "600",
-  },
-  helpButton: {
-    flex: 1,
-    backgroundColor: "#F3F4F6",
-    paddingVertical: 12,
-    borderRadius: 8,
-    alignItems: "center",
-  },
-  helpButtonText: {
-    color: "#6B7280",
     fontSize: 14,
     fontWeight: "600",
   },
@@ -4024,40 +3835,22 @@ const styles = StyleSheet.create({
     flex: 1,
     lineHeight: 18,
   },
-  pickupExpireContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#FEE2E2",
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 6,
-    marginTop: 8,
-    gap: 6,
-  },
-  pickupExpireText: {
-    fontSize: 12,
-    color: "#DC2626",
-    fontWeight: "500",
-    flex: 1,
-  },
   boldDateText: {
     fontWeight: "bold",
     color: "#b75020",
   },
   stickyFooter: {
-    position: "absolute",
-    bottom: 0,
-    left: 0,
-    right: 0,
     backgroundColor: "#FFFFFF",
     borderTopWidth: 1,
     borderTopColor: "#F0F0F0",
-    paddingBottom: Platform.OS === "ios" ? 12 : 8,
+    paddingBottom: Platform.OS === "ios" ? 20 : 12,
+    paddingTop: 8,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: -2 },
     shadowOpacity: 0.05,
     shadowRadius: 3,
     elevation: 5,
+    // Remove position: absolute and let it be at bottom of content
   },
   pickupCodeContainer: {
     flexDirection: "row",
@@ -4130,22 +3923,6 @@ const styles = StyleSheet.create({
   cancelledProductCard: {
     backgroundColor: "#FEF2F2",
     opacity: 0.85,
-  },
-  cancelledItemBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#FEE2E2",
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 6,
-    alignSelf: "flex-start",
-    marginBottom: 10,
-    gap: 6,
-  },
-  cancelledItemBadgeText: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#EF4444",
   },
   cancelledImage: {
     opacity: 0.5,
@@ -4476,25 +4253,6 @@ const styles = StyleSheet.create({
     color: "#6B7280",
     textAlign: "center",
     lineHeight: 16,
-  },
-  shopTotalRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingTop: 8,
-    marginTop: 4,
-    borderTopWidth: 1,
-    borderTopColor: "#E5E7EB",
-  },
-  shopTotalLabel: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#111827",
-  },
-  shopTotalValue: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: "#F97316",
   },
   riderPhone: {
     fontSize: 14,
