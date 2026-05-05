@@ -26905,16 +26905,20 @@ class SellerOrderList(viewsets.ViewSet):
             items = []
             shop_subtotal = Decimal('0.00')
             shop_total_vat = Decimal('0.00')
-            shop_total_delivery_fee = Decimal('0.00')
-            shop_total_amount = Decimal('0.00')
+            shop_total_shipping_fee = Decimal('0.00')
+            shop_grand_total = Decimal('0.00')
             
             for checkout in checkouts:
                 if checkout.direct_product_id and not checkout.cart_item:
-                    price = float(checkout.direct_product_price or 0)
-                    item_total = price * checkout.quantity
-                    shop_subtotal += Decimal(str(item_total))
-                    shop_total_amount += Decimal(str(item_total))
-                    shop_total_delivery_fee += Decimal(str(getattr(checkout, 'shipping_fee', 0)))
+                    # Direct product checkout (no cart item)
+                    price = Decimal(str(checkout.direct_product_price or 0))
+                    item_subtotal = price * checkout.quantity
+                    shipping_fee = Decimal(str(getattr(checkout, 'shipping_fee', 0)))
+                    item_total = item_subtotal + shipping_fee
+                    
+                    shop_subtotal += item_subtotal
+                    shop_total_shipping_fee += shipping_fee
+                    shop_grand_total += item_total
                     
                     items.append({
                         'id': str(checkout.id),
@@ -26923,7 +26927,7 @@ class SellerOrderList(viewsets.ViewSet):
                             'product': {
                                 "id": checkout.direct_product_id,
                                 "name": checkout.direct_product_name or "Unknown Product",
-                                "price": price,
+                                "price": float(price),
                                 "variant": "Standard",
                                 "shop": {"id": str(shop.id), "name": shop.name},
                                 "media": [],
@@ -26933,10 +26937,12 @@ class SellerOrderList(viewsets.ViewSet):
                             'variant_id': checkout.direct_variant_id
                         },
                         'quantity': checkout.quantity,
-                        'total_amount': item_total,
+                        'subtotal': float(item_subtotal),
+                        'total_amount': float(item_total),
                         'status': checkout.status if hasattr(checkout, 'status') else 'pending',
-                        'shipping_fee': float(getattr(checkout, 'shipping_fee', 0)),
-                        'distance_km': getattr(checkout, 'distance_km', None)
+                        'shipping_fee': float(shipping_fee),
+                        'distance_km': getattr(checkout, 'distance_km', None),
+                        'value_added_tax_amount': None
                     })
                     continue
                 
@@ -26946,7 +26952,7 @@ class SellerOrderList(viewsets.ViewSet):
                 
                 product = cart_item.product
                 variant = cart_item.variant
-                price = float(variant.price) if variant and variant.price else 0
+                price = Decimal(str(variant.price)) if variant and variant.price else Decimal(str(product.price)) if hasattr(product, 'price') else Decimal('0')
                 variant_title = variant.title if variant else str(product.condition)
                 product_media = self._get_product_media(product)
                 variant_image_url = None
@@ -26956,20 +26962,29 @@ class SellerOrderList(viewsets.ViewSet):
                     except Exception as e:
                         print(f"Error getting variant image: {e}")
                 
-                item_total = price * checkout.quantity
-                shop_subtotal += Decimal(str(item_total))
-                shop_total_amount += Decimal(str(item_total))
-                shop_total_delivery_fee += Decimal(str(getattr(checkout, 'shipping_fee', 0)))
+                # Calculate item subtotal (price * quantity, NO VAT yet)
+                item_subtotal = price * checkout.quantity
                 
-                # Calculate VAT
-                if variant and variant.value_added_tax and variant.price:
-                    vat_amount = variant.price * (Decimal(str(variant.value_added_tax)) / Decimal('100'))
-                    shop_total_vat += vat_amount * checkout.quantity
+                # Get VAT amount from variant's value_added_tax_amount field
+                # This field should contain the VAT amount for ONE item
+                value_added_tax_amount = None
+                if variant and variant.value_added_tax_amount:
+                    value_added_tax_amount = float(variant.value_added_tax_amount)
+                    # Add VAT to shop total (VAT amount for ONE item * quantity)
+                    shop_total_vat += Decimal(str(value_added_tax_amount)) * checkout.quantity
+                
+                # Total amount = subtotal + shipping fee (VAT is already included in price)
+                shipping_fee = Decimal(str(getattr(checkout, 'shipping_fee', 0)))
+                item_total = item_subtotal + shipping_fee
+                
+                shop_subtotal += item_subtotal
+                shop_total_shipping_fee += shipping_fee
+                shop_grand_total += item_total
                 
                 product_data = {
                     "id": str(product.id),
                     "name": product.name,
-                    "price": price,
+                    "price": float(price),
                     "variant": variant_title,
                     "shop": {"id": str(shop.id), "name": shop.name},
                     "media": product_media,
@@ -26987,20 +27002,22 @@ class SellerOrderList(viewsets.ViewSet):
                         'variant_id': str(variant.id) if variant else None
                     },
                     'quantity': checkout.quantity,
-                    'total_amount': item_total,
+                    'subtotal': float(item_subtotal),
+                    'total_amount': float(item_total),
                     'status': checkout.status if hasattr(checkout, 'status') else 'pending',
-                    'shipping_fee': float(getattr(checkout, 'shipping_fee', 0)),
-                    'distance_km': getattr(checkout, 'distance_km', None)
+                    'shipping_fee': float(shipping_fee),
+                    'distance_km': getattr(checkout, 'distance_km', None),
+                    'value_added_tax_amount': value_added_tax_amount  # VAT amount for ONE item
                 })
             
             # Get transaction fee from order metadata (pro-rated for this shop)
             transaction_fee = None
             if order.transaction_fee and order.total_amount > 0:
-                # Pro-rate transaction fee based on shop's subtotal
-                global_subtotal = sum(float(c.total_amount) for c in Checkout.objects.filter(order=order))
-                if global_subtotal > 0:
-                    shop_transaction_fee = (float(order.transaction_fee) * float(shop_subtotal)) / global_subtotal
-                    transaction_fee = round(shop_transaction_fee, 2)
+                # Pro-rate transaction fee based on shop's grand total
+                global_total = sum(Decimal(str(c.total_amount)) for c in Checkout.objects.filter(order=order))
+                if global_total > 0:
+                    shop_transaction_fee = (Decimal(str(order.transaction_fee)) * shop_grand_total) / global_total
+                    transaction_fee = float(shop_transaction_fee)
             
             # Count total shops in order and confirmed shops
             all_order_shop_statuses = OrderShopStatus.objects.filter(order=order)
@@ -27024,9 +27041,9 @@ class SellerOrderList(viewsets.ViewSet):
                         'contact_number': order.user.contact_number,
                     },
                     'status': self._get_shop_shipping_status(shop_status.status),
-                    'total_amount': float(shop_total_amount),  # Shop's total amount
-                    'subtotal': float(shop_subtotal),  # Shop's subtotal
-                    'shipping_fee': float(shop_total_delivery_fee),  # Shop's delivery fee
+                    'total_amount': float(shop_grand_total),
+                    'subtotal': float(shop_subtotal),
+                    'shipping_fee': float(shop_total_shipping_fee),
                     'transaction_fee': transaction_fee,
                     'total_vat': float(shop_total_vat),
                     'payment_method': order.payment_method,
@@ -49615,165 +49632,260 @@ class CustomerOrderList(viewsets.ViewSet):
                 "message": f"Error preparing shipment: {str(e)}"
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-    @action(detail=False, methods=['get'])
+    @action(detail=False, methods=['get'], url_path='seller_view_order')
     def seller_view_order(self, request):
-        """
-        Get order details for seller view order page (personal listings)
-        GET /customer-order-list/seller_view_order/?order_id={order_id}&user_id={seller_user_id}
-        """
         order_id = request.GET.get('order_id')
-        seller_user_id = request.GET.get('user_id')
+        shop_id = request.GET.get('shop_id')
+        if not order_id or not shop_id:
+            return Response({'success': False, 'message': 'Missing order_id or shop_id'}, status=status.HTTP_400_BAD_REQUEST)
         
-        if not order_id or not seller_user_id:
-            return Response({
-                'success': False,
-                'message': 'Missing order_id or user_id'
-            }, status=status.HTTP_400_BAD_REQUEST)
-
         try:
-            # Get the Customer instance
-            try:
-                customer = Customer.objects.get(customer_id=seller_user_id)
-            except Customer.DoesNotExist:
-                return Response({
-                    'success': False,
-                    'message': 'Customer profile not found'
-                }, status=status.HTTP_404_NOT_FOUND)
-
-            # Get the order
+            shop = Shop.objects.get(id=shop_id)
             order = Order.objects.select_related('user', 'shipping_address').get(order=order_id)
             
-            # Get checkouts for this order that belong to this seller's personal listings
-            checkouts = Checkout.objects.filter(
-                order=order,
-                cart_item__product__customer=customer,  # Use Customer instance
-                cart_item__product__shop__isnull=True
-            ).select_related(
-                'cart_item__product',
-                'cart_item__product__customer__customer',  # This gets the User from Customer
-                'cart_item__variant'
+            # Get shop status
+            shop_status, _ = OrderShopStatus.objects.get_or_create(
+                order=order, shop=shop,
+                defaults={'status': 'pending'}
             )
             
+            checkouts = Checkout.objects.filter(
+                Q(order=order, cart_item__product__shop=shop) |
+                Q(order=order, direct_shop_id=str(shop.id))
+            ).select_related('cart_item__product', 'cart_item__variant').prefetch_related('cart_item__product__productmedia_set')
+            
             if not checkouts.exists():
-                return Response({
-                    'success': False,
-                    'message': 'No items found for your personal listings in this order'
-                }, status=status.HTTP_404_NOT_FOUND)
-
-            # Get delivery info if exists
+                return Response({'success': False, 'message': 'No items found for this shop in the order'}, status=status.HTTP_404_NOT_FOUND)
+            
+            # Get delivery info - filtered by shop
             delivery_info = None
+            proof_images = []
+            
             try:
-                delivery = Delivery.objects.filter(order=order).order_by('-created_at').first()
-                if delivery:
+                active_delivery = Delivery.objects.filter(
+                    order=order,
+                    shop=shop
+                ).exclude(
+                    status__in=['cancelled', 'expired', 'rejected', 'declined']
+                ).order_by(
+                    Case(
+                        When(status='accepted', then=Value(1)),
+                        When(status='picked_up', then=Value(2)),
+                        When(status='in_progress', then=Value(3)),
+                        When(status='delivered', then=Value(4)),
+                        When(status='pending', then=Value(5)),
+                        default=Value(6),
+                        output_field=IntegerField(),
+                    ),
+                    '-created_at'
+                ).select_related('rider__rider').first()
+                
+                if not active_delivery:
+                    active_delivery = Delivery.objects.filter(order=order, shop=shop).order_by('-created_at').first()
+                
+                if active_delivery:
+                    is_accepted = active_delivery.status in ['accepted', 'picked_up', 'in_progress', 'delivered']
+                    
                     delivery_info = {
-                        'delivery_id': str(delivery.id),
-                        'rider_name': f"{delivery.rider.rider.first_name} {delivery.rider.rider.last_name}" if delivery.rider else None,
-                        'status': delivery.status,
-                        'estimated_delivery': self._get_estimated_delivery(delivery),
-                        'submitted_at': delivery.created_at.isoformat(),
-                        'tracking_number': f"TRK-{str(delivery.id)[:10]}" if delivery.status not in ['pending_offer'] else None
+                        'delivery_id': str(active_delivery.id),
+                        'rider_name': f"{active_delivery.rider.rider.first_name} {active_delivery.rider.rider.last_name}".strip() or active_delivery.rider.rider.username if active_delivery.rider else None,
+                        'rider_phone': active_delivery.rider.rider.contact_number if active_delivery.rider else None,
+                        'status': active_delivery.status,
+                        'estimated_delivery': self._get_estimated_delivery(active_delivery),
+                        'submitted_at': active_delivery.created_at.isoformat() if active_delivery.created_at else None,
+                        'tracking_number': f"TRK-{str(active_delivery.id)[:10]}" if active_delivery.status != 'pending_offer' else None,
+                        'is_accepted': is_accepted,
+                        'accepted_at': active_delivery.updated_at.isoformat() if is_accepted and active_delivery.updated_at else None
                     }
-            except Delivery.DoesNotExist:
-                pass
-
-            # Build items list
+                    
+                    if active_delivery.status == 'delivered':
+                        proofs = Proof.objects.filter(delivery=active_delivery).order_by('-uploaded_at')
+                        for proof in proofs:
+                            if proof.file_data:
+                                file_url = convert_s3_to_public_url(proof.file_data.url)
+                                proof_images.append({
+                                    'id': str(proof.id),
+                                    'file_url': file_url,
+                                    'file_type': proof.file_type,
+                                    'uploaded_at': proof.uploaded_at.isoformat() if proof.uploaded_at else None
+                                })
+            except Exception as e:
+                print(f"Error fetching delivery: {e}")
+            
+            # Build items list and calculate shop-specific totals
             items = []
-            total_amount = 0
+            shop_subtotal = Decimal('0.00')
+            shop_total_vat = Decimal('0.00')
+            shop_total_shipping_fee = Decimal('0.00')
+            shop_grand_total = Decimal('0.00')
             
             for checkout in checkouts:
+                if checkout.direct_product_id and not checkout.cart_item:
+                    # Direct product checkout (no cart item)
+                    price = Decimal(str(checkout.direct_product_price or 0))
+                    item_subtotal = price * checkout.quantity
+                    shipping_fee = Decimal(str(getattr(checkout, 'shipping_fee', 0)))
+                    item_total = item_subtotal + shipping_fee
+                    
+                    shop_subtotal += item_subtotal
+                    shop_total_shipping_fee += shipping_fee
+                    shop_grand_total += item_total
+                    
+                    items.append({
+                        'id': str(checkout.id),
+                        'cart_item': {
+                            'id': None,
+                            'product': {
+                                "id": checkout.direct_product_id,
+                                "name": checkout.direct_product_name or "Unknown Product",
+                                "price": float(price),
+                                "variant": "Standard",
+                                "shop": {"id": str(shop.id), "name": shop.name},
+                                "media": [],
+                                "primary_image": {"url": convert_s3_to_public_url(checkout.direct_product_image) if checkout.direct_product_image else None}
+                            },
+                            'quantity': checkout.quantity,
+                            'variant_id': checkout.direct_variant_id
+                        },
+                        'quantity': checkout.quantity,
+                        'subtotal': float(item_subtotal),
+                        'total_amount': float(item_total),
+                        'status': checkout.status if hasattr(checkout, 'status') else 'pending',
+                        'shipping_fee': float(shipping_fee),
+                        'distance_km': getattr(checkout, 'distance_km', None),
+                        'value_added_tax_amount': None
+                    })
+                    continue
+                
                 cart_item = checkout.cart_item
                 if not cart_item or not cart_item.product:
                     continue
                 
                 product = cart_item.product
                 variant = cart_item.variant
+                price = Decimal(str(variant.price)) if variant and variant.price else Decimal(str(product.price)) if hasattr(product, 'price') else Decimal('0')
+                variant_title = variant.title if variant else str(product.condition)
+                product_media = self._get_product_media(product)
+                variant_image_url = None
+                if variant and variant.image:
+                    try:
+                        variant_image_url = convert_s3_to_public_url(variant.image.url)
+                    except Exception as e:
+                        print(f"Error getting variant image: {e}")
                 
-                # Get price from variant
-                price = float(variant.price) if variant and variant.price else 0
-                variant_title = variant.title if variant else product.condition
+                # Calculate item subtotal (price * quantity, NO VAT yet)
+                item_subtotal = price * checkout.quantity
                 
-                item_total = price * checkout.quantity
-                total_amount += item_total
+                # Get VAT amount from variant's value_added_tax_amount field
+                # This field should contain the VAT amount for ONE item
+                value_added_tax_amount = None
+                if variant and variant.value_added_tax_amount:
+                    value_added_tax_amount = float(variant.value_added_tax_amount)
+                    # Add VAT to shop total (VAT amount for ONE item * quantity)
+                    shop_total_vat += Decimal(str(value_added_tax_amount)) * checkout.quantity
                 
-                # Get seller information from the Customer model
-                seller_user = None
-                if product.customer and hasattr(product.customer, 'customer'):
-                    seller_user = product.customer.customer
+                # Total amount = subtotal + shipping fee (VAT is already included in price)
+                shipping_fee = Decimal(str(getattr(checkout, 'shipping_fee', 0)))
+                item_total = item_subtotal + shipping_fee
+                
+                shop_subtotal += item_subtotal
+                shop_total_shipping_fee += shipping_fee
+                shop_grand_total += item_total
+                
+                product_data = {
+                    "id": str(product.id),
+                    "name": product.name,
+                    "price": float(price),
+                    "variant": variant_title,
+                    "shop": {"id": str(shop.id), "name": shop.name},
+                    "media": product_media,
+                    "primary_image": product_media[0] if product_media else None
+                }
+                if variant_image_url:
+                    product_data["variant_image"] = variant_image_url
                 
                 items.append({
                     'id': str(checkout.id),
                     'cart_item': {
                         'id': str(cart_item.id),
-                        'product': {
-                            'id': str(product.id),
-                            'name': product.name,
-                            'price': price,
-                            'variant': variant_title,
-                            'seller': {
-                                'id': str(seller_user.id) if seller_user else None,
-                                'username': seller_user.username if seller_user else "Unknown Seller",
-                                'first_name': seller_user.first_name if seller_user else "",
-                                'last_name': seller_user.last_name if seller_user else ""
-                            } if seller_user else None
-                        },
+                        'product': product_data,
                         'quantity': cart_item.quantity,
                         'variant_id': str(variant.id) if variant else None
                     },
                     'quantity': checkout.quantity,
-                    'total_amount': item_total,
+                    'subtotal': float(item_subtotal),
+                    'total_amount': float(item_total),
                     'status': checkout.status if hasattr(checkout, 'status') else 'pending',
+                    'shipping_fee': float(shipping_fee),
+                    'distance_km': getattr(checkout, 'distance_km', None),
+                    'value_added_tax_amount': value_added_tax_amount  # VAT amount for ONE item
                 })
-
-            # Get shipping status
-            latest_delivery = Delivery.objects.filter(order=order).order_by('-created_at').first()
-            shipping_status = self._get_shipping_status(
-                order.status, 
-                latest_delivery.status if latest_delivery else None
-            )
-
-            # Build response - matching seller-order-list structure
+            
+            # Get transaction fee from order metadata (pro-rated for this shop)
+            transaction_fee = None
+            if order.transaction_fee and order.total_amount > 0:
+                # Pro-rate transaction fee based on shop's grand total
+                global_total = sum(Decimal(str(c.total_amount)) for c in Checkout.objects.filter(order=order))
+                if global_total > 0:
+                    shop_transaction_fee = (Decimal(str(order.transaction_fee)) * shop_grand_total) / global_total
+                    transaction_fee = float(shop_transaction_fee)
+            
+            # Count total shops in order and confirmed shops
+            all_order_shop_statuses = OrderShopStatus.objects.filter(order=order)
+            total_shops_in_order = all_order_shop_statuses.count()
+            confirmed_shops_count = all_order_shop_statuses.exclude(status='pending').count()
+            
             response_data = {
                 'success': True,
                 'data': {
                     'order_id': str(order.order),
-                    'buyer': {
+                    'shop_status': shop_status.status,
+                    'global_status': order.status,
+                    'total_shops_in_order': total_shops_in_order,
+                    'confirmed_shops_count': confirmed_shops_count,
+                    'user': {
                         'id': str(order.user.id),
                         'username': order.user.username,
                         'email': order.user.email,
                         'first_name': order.user.first_name,
                         'last_name': order.user.last_name,
-                        'phone': order.user.contact_number,
+                        'contact_number': order.user.contact_number,
                     },
-                    'status': shipping_status,
-                    'total_amount': total_amount,
+                    'status': self._get_shop_shipping_status(shop_status.status),
+                    'total_amount': float(shop_grand_total),
+                    'subtotal': float(shop_subtotal),
+                    'shipping_fee': float(shop_total_shipping_fee),
+                    'transaction_fee': transaction_fee,
+                    'total_vat': float(shop_total_vat),
                     'payment_method': order.payment_method,
                     'delivery_method': order.delivery_method,
                     'delivery_address': order.shipping_address.get_full_address() if order.shipping_address else order.delivery_address_text,
-                    'created_at': order.created_at.isoformat(),
-                    'updated_at': order.updated_at.isoformat(),
+                    'shipping_address': {
+                        'id': str(order.shipping_address.id),
+                        'recipient_name': order.shipping_address.recipient_name,
+                        'recipient_phone': order.shipping_address.recipient_phone,
+                        'full_address': order.shipping_address.get_full_address(),
+                        'instructions': order.shipping_address.instructions,
+                    } if order.shipping_address else None,
+                    'created_at': order.created_at.isoformat() if order.created_at else None,
+                    'updated_at': order.updated_at.isoformat() if order.updated_at else None,
+                    'completed_at': order.completed_at.isoformat() if order.completed_at else None,
                     'items': items,
                     'delivery_info': delivery_info,
-                    'is_personal_listing': True
+                    'proof_images': proof_images,
+                    'pickup_date': order.pickup_date.isoformat() if order.pickup_date else None,
+                    'metadata': order.metadata or {},
                 }
             }
-
+            
             return Response(response_data, status=status.HTTP_200_OK)
-
+        except Shop.DoesNotExist:
+            return Response({'success': False, 'message': 'Shop not found'}, status=status.HTTP_404_NOT_FOUND)
         except Order.DoesNotExist:
-            return Response({
-                'success': False,
-                'message': 'Order not found'
-            }, status=status.HTTP_404_NOT_FOUND)
+            return Response({'success': False, 'message': 'Order not found'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
-            logger.error(f"Error retrieving order: {str(e)}", exc_info=True)
-            return Response({
-                'success': False,
-                'message': f'Error retrieving order: {str(e)}'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-
-
+            return Response({'success': False, 'message': f'Error retrieving order: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
 
 class CustomerArrangeShipment(viewsets.ViewSet):
     @action(detail=True, methods=['get'])

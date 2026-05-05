@@ -71,6 +71,7 @@ interface OrderItem {
   waybill_url?: string;
   vat?: number;
   variant_vat?: number;
+  price?: number;
 }
 interface RiderAssignment {
   rider_name: string;
@@ -225,7 +226,8 @@ const getStatusConfig = (
       color: "#F97316",
       bgColor: "#FFF7ED",
       icon: "package-outline",
-      description: "Order is ready. Waiting for rider to pick up the item from your store.",
+      description:
+        "Order is ready. Waiting for rider to pick up the item from your store.",
     },
     waiting_for_pickup: {
       label: "Waiting for Rider Pickup",
@@ -503,7 +505,8 @@ export default function SellerViewOrder() {
     // For partially_confirmed orders, only show confirm button if not already confirmed
     const isPartiallyConfirmed = currentStatus === "partially_confirmed";
     const canConfirm =
-      (isPending || (shopStatus === "pending" && isPartiallyConfirmed)) && !allShopsConfirmed;
+      (isPending || (shopStatus === "pending" && isPartiallyConfirmed)) &&
+      !allShopsConfirmed;
 
     // Get the base showToDeliver value from available actions
     const hasToDeliverAction = enhancedAvailableActions.includes("to_deliver");
@@ -513,13 +516,18 @@ export default function SellerViewOrder() {
       hasToDeliverAction && (isRiderAccepted || isRiderPickedUp);
 
     const showArrangeShipment =
-      enhancedAvailableActions.includes("arrange_shipment") && !isRiderAssignedStatus;
+      enhancedAvailableActions.includes("arrange_shipment") &&
+      !isRiderAssignedStatus;
     console.log("🔍 [FRONTEND] showArrangeShipment:", showArrangeShipment);
 
     return {
-      showConfirm: isPending || enhancedAvailableActions.includes("confirm") || canConfirm,
+      showConfirm:
+        isPending || enhancedAvailableActions.includes("confirm") || canConfirm,
       showCancel:
-        (isPending || isRiderAssignedStatus || enhancedAvailableActions.includes("cancel")) && !shouldHideCancel,
+        (isPending ||
+          isRiderAssignedStatus ||
+          enhancedAvailableActions.includes("cancel")) &&
+        !shouldHideCancel,
       showReadyToShip: enhancedAvailableActions.includes("ready_to_ship"),
       showArrangeShipment: showArrangeShipment,
       showReadyForPickup: enhancedAvailableActions.includes("ready_for_pickup"),
@@ -572,7 +580,10 @@ export default function SellerViewOrder() {
     const shopStatus = order?.shop_status?.toLowerCase() || "";
 
     // Check if order is shipped and delivered
-    if (shopStatus === "shipped" && order?.delivery_info?.status === "delivered") {
+    if (
+      shopStatus === "shipped" &&
+      order?.delivery_info?.status === "delivered"
+    ) {
       customLabel = "Delivered";
       customDescription = "Order delivered. Mark as complete to finalize.";
       customIcon = "checkmark-circle-outline";
@@ -581,8 +592,7 @@ export default function SellerViewOrder() {
     // Check if shop_status is shipped - display as "Out for Delivery"
     else if (shopStatus === "shipped") {
       customLabel = "Out for Delivery";
-      customDescription =
-        "Rider is on the way to deliver to the customer.";
+      customDescription = "Rider is on the way to deliver to the customer.";
       customIcon = "car-outline";
       displayStatus = "to_deliver";
     }
@@ -1135,15 +1145,18 @@ export default function SellerViewOrder() {
     return (
       <View style={styles.stickyFooter}>
         <View style={styles.buttonContainer}>
-          {!isPickup && (showPrintWaybill || (isRiderAssigned && isRiderAccepted)) && shopStatus !== "waiting_for_rider" && shopStatus !== "shipped" && (
-            <TouchableOpacity
-              style={[styles.actionButton, styles.printWaybillButton]}
-              onPress={handlePrintWaybill}
-              disabled={processing}
-            >
-              <Text style={styles.actionButtonText}>Print Waybill</Text>
-            </TouchableOpacity>
-          )}
+          {!isPickup &&
+            (showPrintWaybill || (isRiderAssigned && isRiderAccepted)) &&
+            shopStatus !== "waiting_for_rider" &&
+            shopStatus !== "shipped" && (
+              <TouchableOpacity
+                style={[styles.actionButton, styles.printWaybillButton]}
+                onPress={handlePrintWaybill}
+                disabled={processing}
+              >
+                <Text style={styles.actionButtonText}>Print Waybill</Text>
+              </TouchableOpacity>
+            )}
 
           {showConfirm && (
             <TouchableOpacity
@@ -1617,7 +1630,7 @@ export default function SellerViewOrder() {
                   item.status === "cancelled" && styles.cancelledItemText,
                 ]}
               >
-                {formatCurrency(item.total_amount)}
+                {formatCurrency(item.cart_item?.product?.price || 0)}
               </Text>
             </View>
           ))}
@@ -1631,24 +1644,29 @@ export default function SellerViewOrder() {
           </View>
           <View style={styles.summaryContent}>
             <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>Subtotal</Text>
+              <Text style={styles.summaryLabel}>Items Price</Text>
               <Text style={styles.summaryValue}>
-                {formatCurrency(subtotal)}
+                {formatCurrency(
+                  order.items.reduce(
+                    (sum, item) => sum + (item.cart_item?.product?.price || 0),
+                    0,
+                  ),
+                )}
               </Text>
             </View>
-            {order?.total_vat ? (
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>VAT (Value Added Tax)</Text>
-                <Text style={styles.summaryValue}>
-                  {formatCurrency(order.total_vat)}
-                </Text>
-              </View>
-            ) : null}
             {order?.shipping_fee ? (
               <View style={styles.summaryRow}>
                 <Text style={styles.summaryLabel}>Shipping Fee</Text>
                 <Text style={styles.summaryValue}>
                   {formatCurrency(order.shipping_fee)}
+                </Text>
+              </View>
+            ) : null}
+            {order?.total_vat ? (
+              <View style={styles.summaryRow}>
+                <Text style={styles.summaryLabel}>VAT (Value Added Tax)</Text>
+                <Text style={styles.summaryValue}>
+                  {formatCurrency(order.total_vat)}
                 </Text>
               </View>
             ) : null}
@@ -1664,7 +1682,7 @@ export default function SellerViewOrder() {
             <View style={styles.totalSummaryRow}>
               <Text style={styles.totalSummaryLabel}>Total</Text>
               <Text style={styles.totalSummaryValue}>
-                {formatCurrency(total)}
+                {formatCurrency(order.total_amount)}
               </Text>
             </View>
           </View>
