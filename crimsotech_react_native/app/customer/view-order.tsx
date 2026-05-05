@@ -242,7 +242,12 @@ const groupItemsByShop = (items: OrderItem[]): ShopItemGroup[] => {
 
 export default function ViewTrackOrderPage() {
   const { user, userRole } = useAuth();
-  const { orderId, checkoutId, shopId: filterShopId, shopName: filterShopName } = useLocalSearchParams();
+  const {
+    orderId,
+    checkoutId,
+    shopId: filterShopId,
+    shopName: filterShopName,
+  } = useLocalSearchParams();
   const [loading, setLoading] = useState(true);
   const [orderData, setOrderData] = useState<OrderData | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -262,14 +267,20 @@ export default function ViewTrackOrderPage() {
   const isFilteringByShop = !!filterShopId;
   const currentItems = orderData?.items || [];
   const shopSpecificSubtotal = isFilteringByShop
-    ? currentItems.reduce((sum, item) => sum + parseFloat(item.subtotal || "0"), 0)
+    ? currentItems.reduce(
+        (sum, item) => sum + parseFloat(item.subtotal || "0"),
+        0,
+      )
     : 0;
 
   const shopSpecificShippingFee = isFilteringByShop
-    ? currentItems.reduce((sum, item) => sum + parseFloat(item.shipping_fee || "0"), 0)
+    ? currentItems.reduce(
+        (sum, item) => sum + parseFloat(item.shipping_fee || "0"),
+        0,
+      )
     : 0;
 
-  const shopSpecificTotal = shopSpecificSubtotal + shopSpecificShippingFee;
+  const shopSpecificTotal = shopSpecificSubtotal;
   const getReviewedMapKey = (productId: string) =>
     `${orderId || "unknown-order"}:${productId}`;
 
@@ -345,7 +356,7 @@ export default function ViewTrackOrderPage() {
 
         if (filterShopId && data.items) {
           data.items = data.items.filter(
-            (item: OrderItem) => item.shop_info?.id === filterShopId
+            (item: OrderItem) => item.shop_info?.id === filterShopId,
           );
         }
 
@@ -430,10 +441,13 @@ export default function ViewTrackOrderPage() {
           data.order.pickup_expire_date = data.order.pickup_date;
         }
 
-        if (filterShopId && data.order.shop_statuses?.[filterShopId as string]) {
+        if (
+          filterShopId &&
+          data.order.shop_statuses?.[filterShopId as string]
+        ) {
           data.order.status = data.order.shop_statuses[filterShopId as string];
-          data.order.status_display = 
-            data.order.status.charAt(0).toUpperCase() + 
+          data.order.status_display =
+            data.order.status.charAt(0).toUpperCase() +
             data.order.status.slice(1).replace(/_/g, " ");
         }
 
@@ -905,13 +919,13 @@ export default function ViewTrackOrderPage() {
 
   const handleOrderReceived = async () => {
     if (!orderId || !user?.id) return;
-    
+
     const isShopSpecific = isFilteringByShop && filterShopId;
     const shopId = isShopSpecific ? filterShopId : null;
-    
+
     Alert.alert(
       "Confirm Order Received",
-      isShopSpecific 
+      isShopSpecific
         ? `Have you received this order from ${filterShopName}? This will mark it as completed.`
         : "Have you received your order? This will mark the order as completed.",
       [
@@ -921,44 +935,52 @@ export default function ViewTrackOrderPage() {
           onPress: async () => {
             try {
               let response;
-              
+
               if (isShopSpecific && shopId) {
-                const shopCheckout = orderData?.items.find(item => item.shop_info?.id === shopId);
+                const shopCheckout = orderData?.items.find(
+                  (item) => item.shop_info?.id === shopId,
+                );
                 if (!shopCheckout) {
                   Alert.alert("Error", "Could not find items for this shop");
                   return;
                 }
-                
+
                 response = await AxiosInstance.post(
                   `/purchases-buyer/${orderId}/complete-shop-item/`,
-                  { 
+                  {
                     checkout_id: shopCheckout.checkout_id,
-                    shop_id: shopId 
+                    shop_id: shopId,
                   },
-                  { headers: { "X-User-Id": user.id } }
+                  { headers: { "X-User-Id": user.id } },
                 );
               } else {
                 response = await AxiosInstance.patch(
                   `/purchases-buyer/${orderId}/complete/`,
                   {},
-                  { headers: { "X-User-Id": user.id } }
+                  { headers: { "X-User-Id": user.id } },
                 );
               }
-  
+
               if (response.data.success) {
                 setCenterToastMessage(
-                  isShopSpecific 
+                  isShopSpecific
                     ? `Order from ${filterShopName} marked as completed`
-                    : "Order marked as completed successfully"
+                    : "Order marked as completed successfully",
                 );
                 setCenterToastVisible(true);
                 fetchOrderData();
               } else {
-                Alert.alert("Error", response.data.message || "Failed to complete order");
+                Alert.alert(
+                  "Error",
+                  response.data.message || "Failed to complete order",
+                );
               }
             } catch (error: any) {
               console.error("Error completing order:", error);
-              Alert.alert("Error", error.response?.data?.message || "Failed to complete order");
+              Alert.alert(
+                "Error",
+                error.response?.data?.message || "Failed to complete order",
+              );
             }
           },
         },
@@ -1003,9 +1025,12 @@ export default function ViewTrackOrderPage() {
   const renderRiderInfo = () => {
     if (orderData?.order?.status !== "delivered") return null;
     if (!orderData?.order?.delivery_rider) return null;
-  
-    const riderPhone = (orderData?.order as any)?.delivery_rider_phone || orderData?.delivery_address?.phone_number || null;
-  
+
+    const riderPhone =
+      (orderData?.order as any)?.delivery_rider_phone ||
+      orderData?.delivery_address?.phone_number ||
+      null;
+
     return (
       <View style={styles.infoCard}>
         <View style={styles.cardHeader}>
@@ -1022,9 +1047,7 @@ export default function ViewTrackOrderPage() {
           {riderPhone && (
             <View style={styles.riderInfoRow}>
               <Ionicons name="call-outline" size={16} color="#6B7280" />
-              <Text style={styles.riderPhone}>
-                {riderPhone}
-              </Text>
+              <Text style={styles.riderPhone}>{riderPhone}</Text>
             </View>
           )}
         </View>
@@ -1608,7 +1631,9 @@ export default function ViewTrackOrderPage() {
     }
 
     const days = Math.floor(timeDiff / (1000 * 60 * 60 * 24));
-    const hours = Math.floor((timeDiff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+    const hours = Math.floor(
+      (timeDiff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60),
+    );
     const minutes = Math.floor((timeDiff % (1000 * 60 * 60)) / (1000 * 60));
     const seconds = Math.floor((timeDiff % (1000 * 60)) / 1000);
 
@@ -1639,7 +1664,11 @@ export default function ViewTrackOrderPage() {
     // router.push(`/return/${checkoutId}?orderId=${orderId}`);
   };
 
-  const handleReturnItem = (checkoutId: string, productName: string, shopId: string) => {
+  const handleReturnItem = (
+    checkoutId: string,
+    productName: string,
+    shopId: string,
+  ) => {
     Alert.alert(
       "Request Return/Refund",
       `Do you want to request a return or refund for "${productName}"?`,
@@ -1769,7 +1798,9 @@ export default function ViewTrackOrderPage() {
 
   const groupedItemsByShop = !isFilteringByShop ? groupItemsByShop(items) : [];
   const isSingleShop = isFilteringByShop || groupedItemsByShop.length === 1;
-  const currentShopName = isFilteringByShop ? filterShopName : (groupedItemsByShop[0]?.shopName || null);
+  const currentShopName = isFilteringByShop
+    ? filterShopName
+    : groupedItemsByShop[0]?.shopName || null;
 
   const hasActions = () => {
     return (
@@ -1804,7 +1835,9 @@ export default function ViewTrackOrderPage() {
             <Ionicons name="arrow-back" size={24} color="black" />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>
-            {isFilteringByShop ? `Order from ${filterShopName}` : "Order Detail"}
+            {isFilteringByShop
+              ? `Order from ${filterShopName}`
+              : "Order Detail"}
           </Text>
           <View style={styles.headerIcons}>
             <TouchableOpacity></TouchableOpacity>
@@ -2399,7 +2432,8 @@ export default function ViewTrackOrderPage() {
                     <Text
                       style={[
                         styles.groupItemName,
-                        item.shop_status === "cancelled" && styles.cancelledText,
+                        item.shop_status === "cancelled" &&
+                          styles.cancelledText,
                       ]}
                       numberOfLines={2}
                     >
@@ -2408,7 +2442,8 @@ export default function ViewTrackOrderPage() {
                     <Text
                       style={[
                         styles.groupItemMeta,
-                        item.shop_status === "cancelled" && styles.cancelledText,
+                        item.shop_status === "cancelled" &&
+                          styles.cancelledText,
                       ]}
                       numberOfLines={1}
                     >
@@ -2417,7 +2452,8 @@ export default function ViewTrackOrderPage() {
                     <Text
                       style={[
                         styles.groupItemMeta,
-                        item.shop_status === "cancelled" && styles.cancelledText,
+                        item.shop_status === "cancelled" &&
+                          styles.cancelledText,
                       ]}
                     >
                       Quantity: {formatNumber(item.quantity)}
@@ -2478,7 +2514,8 @@ export default function ViewTrackOrderPage() {
                     <Text
                       style={[
                         styles.groupItemSubtotal,
-                        item.shop_status === "cancelled" && styles.cancelledText,
+                        item.shop_status === "cancelled" &&
+                          styles.cancelledText,
                       ]}
                     >
                       Subtotal: {formatCurrency(item.subtotal)}
@@ -2487,22 +2524,25 @@ export default function ViewTrackOrderPage() {
                       <Text
                         style={[
                           styles.groupItemSubtotal,
-                          item.shop_status === "cancelled" && styles.cancelledText,
+                          item.shop_status === "cancelled" &&
+                            styles.cancelledText,
                         ]}
                       >
                         Shipping: {formatCurrency(item.shipping_fee)}
                       </Text>
                     )}
-                    {item.value_added_tax_amount && parseFloat(item.value_added_tax_amount) > 0 && (
-                      <Text
-                        style={[
-                          styles.groupItemSubtotal,
-                          item.shop_status === "cancelled" && styles.cancelledText,
-                        ]}
-                      >
-                        VAT: {formatCurrency(item.value_added_tax_amount)}
-                      </Text>
-                    )}
+                    {item.value_added_tax_amount &&
+                      parseFloat(item.value_added_tax_amount) > 0 && (
+                        <Text
+                          style={[
+                            styles.groupItemSubtotal,
+                            item.shop_status === "cancelled" &&
+                              styles.cancelledText,
+                          ]}
+                        >
+                          VAT: {formatCurrency(item.value_added_tax_amount)}
+                        </Text>
+                      )}
                   </View>
                 </View>
               ))}
@@ -2556,10 +2596,12 @@ export default function ViewTrackOrderPage() {
                       </View>
                       <Text style={styles.followerText}>
                         {group.items.length} item
-                        {group.items.length > 1 ? "s" : ""} • Subtotal: {formatCurrency(group.subtotal.toString())}
+                        {group.items.length > 1 ? "s" : ""} • Subtotal:{" "}
+                        {formatCurrency(group.subtotal.toString())}
                       </Text>
                       <Text style={styles.followerText}>
-                        Shipping: {formatCurrency(group.shippingFee.toString())} • Total: {formatCurrency(group.total.toString())}
+                        Shipping: {formatCurrency(group.shippingFee.toString())}{" "}
+                        • Total: {formatCurrency(group.total.toString())}
                       </Text>
                     </View>
                   </TouchableOpacity>
@@ -2662,7 +2704,8 @@ export default function ViewTrackOrderPage() {
                           {(item.shop_status === "delivered" ||
                             item.shop_status === "completed") && (
                             <View style={styles.itemActionButtonsContainer}>
-                              {(item.shop_status === "delivered" || item.item_status === "delivered") && (
+                              {(item.shop_status === "delivered" ||
+                                item.item_status === "delivered") && (
                                 <TouchableOpacity
                                   style={styles.receiveItemButton}
                                   onPress={() =>
@@ -2690,7 +2733,7 @@ export default function ViewTrackOrderPage() {
                                     handleReturnItem(
                                       item.checkout_id,
                                       item.product_name,
-                                      item.shop_info?.id || ''
+                                      item.shop_info?.id || "",
                                     )
                                   }
                                 >
@@ -2742,35 +2785,40 @@ export default function ViewTrackOrderPage() {
                           >
                             Subtotal: {formatCurrency(item.subtotal)}
                           </Text>
-                          {item.shipping_fee && parseFloat(item.shipping_fee) > 0 && (
-                            <Text
-                              style={[
-                                styles.groupItemSubtotal,
-                                item.shop_status === "cancelled" &&
-                                  styles.cancelledText,
-                              ]}
-                            >
-                              Shipping: {formatCurrency(item.shipping_fee)}
-                            </Text>
-                          )}
-                          {item.value_added_tax_amount && parseFloat(item.value_added_tax_amount) > 0 && (
-                            <Text
-                              style={[
-                                styles.groupItemSubtotal,
-                                item.shop_status === "cancelled" &&
-                                  styles.cancelledText,
-                              ]}
-                            >
-                              VAT: {formatCurrency(item.value_added_tax_amount)}
-                            </Text>
-                          )}
+                          {item.shipping_fee &&
+                            parseFloat(item.shipping_fee) > 0 && (
+                              <Text
+                                style={[
+                                  styles.groupItemSubtotal,
+                                  item.shop_status === "cancelled" &&
+                                    styles.cancelledText,
+                                ]}
+                              >
+                                Shipping: {formatCurrency(item.shipping_fee)}
+                              </Text>
+                            )}
+                          {item.value_added_tax_amount &&
+                            parseFloat(item.value_added_tax_amount) > 0 && (
+                              <Text
+                                style={[
+                                  styles.groupItemSubtotal,
+                                  item.shop_status === "cancelled" &&
+                                    styles.cancelledText,
+                                ]}
+                              >
+                                VAT:{" "}
+                                {formatCurrency(item.value_added_tax_amount)}
+                              </Text>
+                            )}
                         </View>
                       </View>
                     ))}
                   </View>
                   <View style={styles.shopTotalRow}>
                     <Text style={styles.shopTotalLabel}>Shop Total:</Text>
-                    <Text style={styles.shopTotalValue}>{formatCurrency(group.total.toString())}</Text>
+                    <Text style={styles.shopTotalValue}>
+                      {formatCurrency(group.total.toString())}
+                    </Text>
                   </View>
                 </View>
               ))}
@@ -2780,9 +2828,11 @@ export default function ViewTrackOrderPage() {
 
         <View style={styles.summaryCard}>
           <Text style={styles.summaryTitle}>
-            {isFilteringByShop ? `Order Summary (${filterShopName})` : "Order Summary"}
+            {isFilteringByShop
+              ? `Order Summary (${filterShopName})`
+              : "Order Summary"}
           </Text>
-          
+
           {isFilteringByShop ? (
             <>
               <View style={styles.summaryRow}>
@@ -2790,7 +2840,13 @@ export default function ViewTrackOrderPage() {
                   Subtotal ({formatNumber(items.length)} items):
                 </Text>
                 <Text style={styles.summaryValue}>
-                  {formatCurrency(shopSpecificSubtotal.toString())}
+                  {formatCurrency(formatNumber(items.length))}
+                </Text>
+              </View>
+              <View style={styles.summaryRow}>
+                <Text style={styles.summaryLabel}>Transaction Fee:</Text>
+                <Text style={styles.summaryValue}>
+                  {formatCurrency(order_summary.transaction_fee || "0")}
                 </Text>
               </View>
               <View style={styles.summaryRow}>
@@ -2799,11 +2855,24 @@ export default function ViewTrackOrderPage() {
                   {formatCurrency(shopSpecificShippingFee.toString())}
                 </Text>
               </View>
-              {items.reduce((sum, item) => sum + parseFloat(item.value_added_tax_amount || "0"), 0) > 0 && (
+              {items.reduce(
+                (sum, item) =>
+                  sum + parseFloat(item.value_added_tax_amount || "0"),
+                0,
+              ) > 0 && (
                 <View style={styles.summaryRow}>
                   <Text style={styles.summaryLabel}>VAT:</Text>
                   <Text style={styles.summaryValue}>
-                    {formatCurrency(items.reduce((sum, item) => sum + parseFloat(item.value_added_tax_amount || "0"), 0).toString())}
+                    {formatCurrency(
+                      items
+                        .reduce(
+                          (sum, item) =>
+                            sum +
+                            parseFloat(item.value_added_tax_amount || "0"),
+                          0,
+                        )
+                        .toString(),
+                    )}
                   </Text>
                 </View>
               )}
@@ -2818,7 +2887,8 @@ export default function ViewTrackOrderPage() {
             <>
               <View style={styles.summaryRow}>
                 <Text style={styles.summaryLabel}>
-                  Subtotal ({formatNumber(orderData.summary_counts.total_items)} items):
+                  Subtotal ({formatNumber(orderData.summary_counts.total_items)}{" "}
+                  items):
                 </Text>
                 <Text style={styles.summaryValue}>
                   {formatCurrency(order_summary.subtotal)}
@@ -2830,29 +2900,47 @@ export default function ViewTrackOrderPage() {
                   {formatCurrency(order_summary.shipping_fee)}
                 </Text>
               </View>
-              
-              {order_summary.shipping_fees_breakdown && 
-               typeof order_summary.shipping_fees_breakdown === 'object' &&
-               Object.keys(order_summary.shipping_fees_breakdown).length > 0 && (
-                <View style={styles.shippingBreakdownContainer}>
-                  <Text style={styles.breakdownTitle}>Breakdown by Shop:</Text>
-                  {Object.entries(order_summary.shipping_fees_breakdown).map(([shopId, fee], index) => {
-                    const shopName = orderData?.items.find(item => 
-                      (item.shop_info?.id === shopId || item.shop_info?.id?.toString() === shopId?.toString())
-                    )?.shop_info?.name || `Shop ${shopId}`;
-                    
-                    return (
-                      <View key={`${shopId}-${index}`} style={styles.breakdownRow}>
-                        <Text style={styles.breakdownLabel}>{shopName}:</Text>
-                        <Text style={styles.breakdownValue}>{formatCurrency(fee.toString())}</Text>
-                      </View>
-                    );
-                  })}
-                </View>
-              )}
+
+              {order_summary.shipping_fees_breakdown &&
+                typeof order_summary.shipping_fees_breakdown === "object" &&
+                Object.keys(order_summary.shipping_fees_breakdown).length >
+                  0 && (
+                  <View style={styles.shippingBreakdownContainer}>
+                    <Text style={styles.breakdownTitle}>
+                      Breakdown by Shop:
+                    </Text>
+                    {Object.entries(order_summary.shipping_fees_breakdown).map(
+                      ([shopId, fee], index) => {
+                        const shopName =
+                          orderData?.items.find(
+                            (item) =>
+                              item.shop_info?.id === shopId ||
+                              item.shop_info?.id?.toString() ===
+                                shopId?.toString(),
+                          )?.shop_info?.name || `Shop ${shopId}`;
+
+                        return (
+                          <View
+                            key={`${shopId}-${index}`}
+                            style={styles.breakdownRow}
+                          >
+                            <Text style={styles.breakdownLabel}>
+                              {shopName}:
+                            </Text>
+                            <Text style={styles.breakdownValue}>
+                              {formatCurrency(fee.toString())}
+                            </Text>
+                          </View>
+                        );
+                      },
+                    )}
+                  </View>
+                )}
               {parseFloat(order_summary.tax || "0") > 0 && (
                 <View style={styles.summaryRow}>
-                  <Text style={styles.summaryLabel}>Value Added Tax (VAT):</Text>
+                  <Text style={styles.summaryLabel}>
+                    Value Added Tax (VAT):
+                  </Text>
                   <Text style={styles.summaryValue}>
                     {formatCurrency(order_summary.tax)}
                   </Text>
@@ -2923,34 +3011,45 @@ export default function ViewTrackOrderPage() {
       </ScrollView>
 
       {(() => {
-        const currentShopStatus = isFilteringByShop && filterShopId 
-          ? orderData?.order?.shop_statuses?.[filterShopId as string] 
-          : null;
-        
-        const showOrderReceivedForShop = isFilteringByShop && currentShopStatus === 'delivered';
-        const showCompletedActionsForShop = isFilteringByShop && currentShopStatus === 'completed';
-        
-        const showOrderReceivedForOrder = !isFilteringByShop && (
-          orderStatusLower === "delivered" ||
-          orderStatusLower === "picked_up" ||
-          orderStatusLower === "partially_delivered"
-        );
-        
-        const showCancelForOrder = !isFilteringByShop && (
-          actions.can_cancel ||
-          (orderStatusLower === "rider_assigned" && order?.delivery_status?.toLowerCase() === "pending")
-        );
-        
-        const showRefundRateForOrder = !isFilteringByShop && (
-          orderStatusLower === "delivered" ||
-          orderStatusLower === "partially_delivered" ||
-          orderStatusLower === "completed"
-        ) && (actions.can_review || actions.can_return);
-        
-        if (!showCancelForOrder && !showOrderReceivedForOrder && !showRefundRateForOrder && !showOrderReceivedForShop && !showCompletedActionsForShop) {
+        const currentShopStatus =
+          isFilteringByShop && filterShopId
+            ? orderData?.order?.shop_statuses?.[filterShopId as string]
+            : null;
+
+        const showOrderReceivedForShop =
+          isFilteringByShop && currentShopStatus === "delivered";
+        const showCompletedActionsForShop =
+          isFilteringByShop && currentShopStatus === "completed";
+
+        const showOrderReceivedForOrder =
+          !isFilteringByShop &&
+          (orderStatusLower === "delivered" ||
+            orderStatusLower === "picked_up" ||
+            orderStatusLower === "partially_delivered");
+
+        const showCancelForOrder =
+          !isFilteringByShop &&
+          (actions.can_cancel ||
+            (orderStatusLower === "rider_assigned" &&
+              order?.delivery_status?.toLowerCase() === "pending"));
+
+        const showRefundRateForOrder =
+          !isFilteringByShop &&
+          (orderStatusLower === "delivered" ||
+            orderStatusLower === "partially_delivered" ||
+            orderStatusLower === "completed") &&
+          (actions.can_review || actions.can_return);
+
+        if (
+          !showCancelForOrder &&
+          !showOrderReceivedForOrder &&
+          !showRefundRateForOrder &&
+          !showOrderReceivedForShop &&
+          !showCompletedActionsForShop
+        ) {
           return null;
         }
-        
+
         return (
           <View style={styles.stickyFooter}>
             <View style={styles.actionButtonsContainer}>
@@ -2968,7 +3067,9 @@ export default function ViewTrackOrderPage() {
                   style={styles.orderReceivedButton}
                   onPress={handleOrderReceived}
                 >
-                  <Text style={styles.orderReceivedButtonText}>Order Received</Text>
+                  <Text style={styles.orderReceivedButtonText}>
+                    Order Received
+                  </Text>
                 </TouchableOpacity>
               )}
 
@@ -2977,7 +3078,9 @@ export default function ViewTrackOrderPage() {
                   style={styles.orderReceivedButton}
                   onPress={handleOrderReceived}
                 >
-                  <Text style={styles.orderReceivedButtonText}>Order Received</Text>
+                  <Text style={styles.orderReceivedButtonText}>
+                    Order Received
+                  </Text>
                 </TouchableOpacity>
               )}
 
@@ -2986,13 +3089,17 @@ export default function ViewTrackOrderPage() {
                   <TouchableOpacity
                     style={styles.requestRefundButton}
                     onPress={() => {
-                      router.push(`/customer/request-refund?orderId=${order.id}&shopId=${filterShopId}`);
+                      router.push(
+                        `/customer/request-refund?orderId=${order.id}&shopId=${filterShopId}`,
+                      );
                     }}
                   >
                     <Text style={styles.requestRefundButtonText}>
                       Request Refund
                       {refundCountdown && (
-                        <Text style={styles.countdownText}>{"\n"}({refundCountdown})</Text>
+                        <Text style={styles.countdownText}>
+                          {"\n"}({refundCountdown})
+                        </Text>
                       )}
                     </Text>
                   </TouchableOpacity>
@@ -3006,76 +3113,81 @@ export default function ViewTrackOrderPage() {
                 </>
               )}
 
-              {showRefundRateForOrder && (() => {
-                const refundDate = order.refund_expire_date;
-                const hasRefundDate =
-                  refundDate !== null &&
-                  refundDate !== undefined &&
-                  refundDate !== "";
-                const isRefundExpired =
-                  hasRefundDate && new Date(refundDate) < new Date();
-                const isPickupMethod = String(
-                  shipping_info?.delivery_method || "",
-                )
-                  .toLowerCase()
-                  .includes("pickup");
-                const isDisabled = isRefundExpired || isPickupMethod;
+              {showRefundRateForOrder &&
+                (() => {
+                  const refundDate = order.refund_expire_date;
+                  const hasRefundDate =
+                    refundDate !== null &&
+                    refundDate !== undefined &&
+                    refundDate !== "";
+                  const isRefundExpired =
+                    hasRefundDate && new Date(refundDate) < new Date();
+                  const isPickupMethod = String(
+                    shipping_info?.delivery_method || "",
+                  )
+                    .toLowerCase()
+                    .includes("pickup");
+                  const isDisabled = isRefundExpired || isPickupMethod;
 
-                return (
-                  <>
-                    {actions.can_return && (
-                      <TouchableOpacity
-                        style={[
-                          styles.requestRefundButton,
-                          isDisabled && styles.requestRefundButtonDisabled,
-                        ]}
-                        onPress={() => {
-                          if (isRefundExpired) {
-                            Alert.alert(
-                              "Refund Period Expired",
-                              "The refund period for this order has expired.",
-                            );
-                          } else if (isPickupMethod) {
-                            Alert.alert(
-                              "Pickup Orders",
-                              "Refunds are not available for pickup orders.",
-                            );
-                          } else {
-                            router.push(
-                              `/customer/request-refund?orderId=${order.id}`,
-                            );
-                          }
-                        }}
-                        disabled={isDisabled}
-                      >
-                        <Text
+                  return (
+                    <>
+                      {actions.can_return && (
+                        <TouchableOpacity
                           style={[
-                            styles.requestRefundButtonText,
-                            isDisabled &&
-                              styles.requestRefundButtonTextDisabled,
+                            styles.requestRefundButton,
+                            isDisabled && styles.requestRefundButtonDisabled,
                           ]}
+                          onPress={() => {
+                            if (isRefundExpired) {
+                              Alert.alert(
+                                "Refund Period Expired",
+                                "The refund period for this order has expired.",
+                              );
+                            } else if (isPickupMethod) {
+                              Alert.alert(
+                                "Pickup Orders",
+                                "Refunds are not available for pickup orders.",
+                              );
+                            } else {
+                              router.push(
+                                `/customer/request-refund?orderId=${order.id}`,
+                              );
+                            }
+                          }}
+                          disabled={isDisabled}
                         >
-                          Request Refund
-                          {refundCountdown && !isPickupMethod && (
-                            <Text style={styles.countdownText}>{"\n"}({refundCountdown})</Text>
-                          )}
-                          {isPickupMethod && " (Not Available)"}
-                          {isRefundExpired && " (Expired)"}
-                        </Text>
-                      </TouchableOpacity>
-                    )}
+                          <Text
+                            style={[
+                              styles.requestRefundButtonText,
+                              isDisabled &&
+                                styles.requestRefundButtonTextDisabled,
+                            ]}
+                          >
+                            Request Refund
+                            {refundCountdown && !isPickupMethod && (
+                              <Text style={styles.countdownText}>
+                                {"\n"}({refundCountdown})
+                              </Text>
+                            )}
+                            {isPickupMethod && " (Not Available)"}
+                            {isRefundExpired && " (Expired)"}
+                          </Text>
+                        </TouchableOpacity>
+                      )}
 
-                    {actions.can_review && (
-                      <TouchableOpacity
-                        style={styles.rateButton}
-                        onPress={() => setRateModalVisible(true)}
-                      >
-                        <Text style={styles.rateButtonText}>Rate Products</Text>
-                      </TouchableOpacity>
-                    )}
-                  </>
-                );
-              })()}
+                      {actions.can_review && (
+                        <TouchableOpacity
+                          style={styles.rateButton}
+                          onPress={() => setRateModalVisible(true)}
+                        >
+                          <Text style={styles.rateButtonText}>
+                            Rate Products
+                          </Text>
+                        </TouchableOpacity>
+                      )}
+                    </>
+                  );
+                })()}
             </View>
           </View>
         );
