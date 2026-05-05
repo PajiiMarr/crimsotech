@@ -1,4 +1,6 @@
 import io
+import math
+from math import radians, sin, cos, atan2, sqrt
 import string
 from decimal import Decimal
 from datetime import datetime, timedelta
@@ -14,7 +16,6 @@ from api.models import (
 )
 from django.conf import settings
 import requests
-import math
 import random
 import string
 import io
@@ -27,7 +28,6 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
 import requests
-import math
 import requests as http_requests
 from datetime import datetime as dt
 from asyncio.log import logger
@@ -26962,18 +26962,16 @@ class SellerOrderList(viewsets.ViewSet):
                     except Exception as e:
                         print(f"Error getting variant image: {e}")
                 
-                # Calculate item subtotal (price * quantity, NO VAT yet)
+                # Calculate item subtotal (price * quantity)
                 item_subtotal = price * checkout.quantity
                 
                 # Get VAT amount from variant's value_added_tax_amount field
-                # This field should contain the VAT amount for ONE item
                 value_added_tax_amount = None
                 if variant and variant.value_added_tax_amount:
                     value_added_tax_amount = float(variant.value_added_tax_amount)
-                    # Add VAT to shop total (VAT amount for ONE item * quantity)
                     shop_total_vat += Decimal(str(value_added_tax_amount)) * checkout.quantity
                 
-                # Total amount = subtotal + shipping fee (VAT is already included in price)
+                # Total amount = subtotal + shipping fee
                 shipping_fee = Decimal(str(getattr(checkout, 'shipping_fee', 0)))
                 item_total = item_subtotal + shipping_fee
                 
@@ -27007,13 +27005,12 @@ class SellerOrderList(viewsets.ViewSet):
                     'status': checkout.status if hasattr(checkout, 'status') else 'pending',
                     'shipping_fee': float(shipping_fee),
                     'distance_km': getattr(checkout, 'distance_km', None),
-                    'value_added_tax_amount': value_added_tax_amount  # VAT amount for ONE item
+                    'value_added_tax_amount': value_added_tax_amount
                 })
             
-            # Get transaction fee from order metadata (pro-rated for this shop)
+            # Calculate transaction fee pro-rated for this shop
             transaction_fee = None
             if order.transaction_fee and order.total_amount > 0:
-                # Pro-rate transaction fee based on shop's grand total
                 global_total = sum(Decimal(str(c.total_amount)) for c in Checkout.objects.filter(order=order))
                 if global_total > 0:
                     shop_transaction_fee = (Decimal(str(order.transaction_fee)) * shop_grand_total) / global_total
@@ -27073,8 +27070,8 @@ class SellerOrderList(viewsets.ViewSet):
         except Order.DoesNotExist:
             return Response({'success': False, 'message': 'Order not found'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
-            return Response({'success': False, 'message': f'Error retrieving order: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        
+            return Response({'success': False, 'message': f'Error retrieving order: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)     
+
 
 class CheckoutOrder(viewsets.ViewSet):
     
@@ -27083,8 +27080,6 @@ class CheckoutOrder(viewsets.ViewSet):
         Calculate straight-line distance using Haversine formula (fallback)
         Returns distance in kilometers
         """
-        from math import radians, sin, cos, sqrt, atan2
-        
         R = 6371  # Earth's radius in kilometers
         
         lat1_rad = radians(lat1)
@@ -27226,6 +27221,211 @@ class CheckoutOrder(viewsets.ViewSet):
         
         return None, None, None
     
+    def _get_user_purchase_history(self, user_id):
+        try:
+            completed_orders = Order.objects.filter(
+                user_id=user_id,
+                status__in=['delivered', 'completed']
+            )
+
+            total_spent_result = completed_orders.aggregate(
+                total_spent=models.Sum('total_amount')
+            )
+            total_spent = total_spent_result['total_spent'] or 0
+
+            thirty_days_ago = timezone.now() - timedelta(days=30)
+            recent_orders_count = completed_orders.filter(
+                created_at__gte=thirty_days_ago
+            ).count()
+
+            order_count = completed_orders.count()
+            avg_order_value = total_spent / order_count if order_count > 0 else 0
+
+            return {
+                "total_spent": float(total_spent),
+                "recent_orders_count": recent_orders_count,
+                "average_order_value": float(avg_order_value),
+                "customer_tier": self._determine_customer_tier(total_spent, recent_orders_count)
+            }
+        except Exception as e:
+            logger.error(f"Error getting user purchase history: {str(e)}")
+            return {
+                "total_spent": 0,
+                "recent_orders_count": 0,
+                "average_order_value": 0,
+                "customer_tier": "new"
+            }
+
+    def _determine_customer_tier(self, total_spent, recent_orders_count):
+        if total_spent >= 10000 or recent_orders_count >= 10:
+            return "platinum"
+        elif total_spent >= 5000 or recent_orders_count >= 5:
+            return "gold"
+        elif total_spent >= 1000 or recent_orders_count >= 2:
+            return "silver"
+        else:
+            return "new"
+
+    def _get_simple_available_vouchers(self, shop_ids, user_id, current_subtotal, user_purchase_history):
+        if not shop_ids:
+            return []
+
+        current_date = timezone.now().date()
+
+        try:
+            vouchers = Voucher.objects.filter(
+                shop_id__in=shop_ids,
+                is_active=True,
+                start_date__lte=current_date,
+                end_date__gte=current_date,
+                minimum_spend__lte=current_subtotal
+            ).select_related('shop').only(
+                'id', 'name', 'code', 'discount_type', 'value',
+                'minimum_spend', 'maximum_usage', 'shop__name', 'shop__id', 'voucher_type'
+            ).order_by('-value')[:10]
+
+            general_vouchers = Voucher.objects.filter(
+                shop__isnull=True,
+                is_active=True,
+                start_date__lte=current_date,
+                end_date__gte=current_date,
+                minimum_spend__lte=current_subtotal
+            ).select_related('shop').only(
+                'id', 'name', 'code', 'discount_type', 'value',
+                'minimum_spend', 'maximum_usage', 'shop__name', 'shop__id', 'voucher_type'
+            ).order_by('-value')[:5]
+
+            all_vouchers = list(vouchers) + list(general_vouchers)
+            unique_vouchers = {v.id: v for v in all_vouchers}.values()
+
+            voucher_list = []
+            for voucher in unique_vouchers:
+                user = User.objects.filter(id=user_id).first()
+                user_has_used = False
+                if user:
+                    user_has_used = UserVoucherUsage.objects.filter(user=user, voucher=voucher).exists()
+                
+                if user_has_used:
+                    continue
+                
+                total_usage_count = UserVoucherUsage.objects.filter(voucher=voucher).count()
+                
+                if voucher.maximum_usage > 0 and total_usage_count >= voucher.maximum_usage:
+                    continue
+                
+                potential_savings = self._calculate_discount(voucher, Decimal(str(current_subtotal)))
+                
+                remaining_usage = None
+                if voucher.maximum_usage > 0:
+                    remaining_usage = voucher.maximum_usage - total_usage_count
+
+                voucher_data = {
+                    "id": str(voucher.id),
+                    "code": voucher.code,
+                    "name": voucher.name,
+                    "discount_type": voucher.discount_type,
+                    "value": float(voucher.value),
+                    "minimum_spend": float(voucher.minimum_spend),
+                    "maximum_usage": voucher.maximum_usage,
+                    "usage_count": total_usage_count,
+                    "remaining_usage": remaining_usage,
+                    "shop_name": voucher.shop.name if voucher.shop else "All Shops",
+                    "shop_id": str(voucher.shop.id) if voucher.shop else None,
+                    "description": self._get_voucher_description(voucher),
+                    "potential_savings": float(potential_savings),
+                    "customer_tier": "all",
+                    "voucher_type": voucher.voucher_type,
+                    "is_general": voucher.shop is None,
+                    "user_has_used": user_has_used
+                }
+                voucher_list.append(voucher_data)
+
+            if voucher_list:
+                grouped = {}
+                for v in voucher_list:
+                    shop_key = v['shop_name']
+                    if shop_key not in grouped:
+                        grouped[shop_key] = []
+                    grouped[shop_key].append(v)
+                
+                result = []
+                for shop_name, vouchers_in_shop in grouped.items():
+                    result.append({
+                        "category": shop_name,
+                        "vouchers": vouchers_in_shop
+                    })
+                return result
+            return []
+
+        except Exception as e:
+            logger.error(f"Error fetching vouchers: {str(e)}")
+            return []
+
+    def _get_voucher_description(self, voucher):
+        if voucher.discount_type == 'percentage':
+            desc = f"{voucher.value}% off"
+        else:
+            desc = f"₱{voucher.value} off"
+
+        if voucher.minimum_spend > 0:
+            desc += f" on orders over ₱{voucher.minimum_spend}"
+        
+        if voucher.maximum_usage > 0:
+            desc += f" • {voucher.maximum_usage} uses available"
+
+        return desc
+
+    def _calculate_discount(self, voucher, subtotal):
+        if isinstance(subtotal, float):
+            subtotal = Decimal(str(subtotal))
+
+        voucher_value = Decimal(str(voucher.value))
+
+        if voucher.discount_type == 'percentage':
+            discount = subtotal * (voucher_value / Decimal('100'))
+            return discount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        elif voucher.discount_type == 'fixed':
+            return min(voucher_value, subtotal).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        return Decimal('0')
+
+    def _decrease_stock_for_order(self, order):
+        """Decrease stock for all items in an order"""
+        checkout_items = Checkout.objects.filter(order=order)
+        stock_errors = []
+
+        for checkout_item in checkout_items:
+            if checkout_item.direct_variant_id:
+                try:
+                    variant = Variants.objects.get(id=checkout_item.direct_variant_id)
+                    if checkout_item.quantity > variant.quantity:
+                        stock_errors.append(f"Insufficient stock for {variant.title}")
+                        continue
+                    variant.quantity -= checkout_item.quantity
+                    variant.save()
+                except Variants.DoesNotExist:
+                    stock_errors.append(f"Variant not found")
+
+            elif checkout_item.cart_item:
+                cart_item = checkout_item.cart_item
+                if cart_item.variant:
+                    variant = cart_item.variant
+                    if checkout_item.quantity > variant.quantity:
+                        stock_errors.append(f"Insufficient stock for {variant.title}")
+                        continue
+                    variant.quantity -= checkout_item.quantity
+                    variant.save()
+                elif cart_item.product and hasattr(cart_item.product, 'quantity'):
+                    product = cart_item.product
+                    if checkout_item.quantity > product.quantity:
+                        stock_errors.append(f"Insufficient stock for {product.name}")
+                        continue
+                    product.quantity -= checkout_item.quantity
+                    product.save()
+
+        return stock_errors
+
+    # ==================== ENDPOINTS ====================
+
     @action(detail=False, methods=['GET'], url_path='get_checkout_items')
     def get_checkout_items(self, request):
         user_id = request.GET.get("user_id")
@@ -27661,160 +27861,6 @@ class CheckoutOrder(viewsets.ViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
         
-    def _get_user_purchase_history(self, user_id):
-        try:
-            completed_orders = Order.objects.filter(
-                user_id=user_id,
-                status__in=['delivered', 'completed']
-            )
-
-            total_spent_result = completed_orders.aggregate(
-                total_spent=models.Sum('total_amount')
-            )
-            total_spent = total_spent_result['total_spent'] or 0
-
-            thirty_days_ago = timezone.now() - timedelta(days=30)
-            recent_orders_count = completed_orders.filter(
-                created_at__gte=thirty_days_ago
-            ).count()
-
-            order_count = completed_orders.count()
-            avg_order_value = total_spent / order_count if order_count > 0 else 0
-
-            return {
-                "total_spent": float(total_spent),
-                "recent_orders_count": recent_orders_count,
-                "average_order_value": float(avg_order_value),
-                "customer_tier": self._determine_customer_tier(total_spent, recent_orders_count)
-            }
-        except Exception as e:
-            logger.error(f"Error getting user purchase history: {str(e)}")
-            return {
-                "total_spent": 0,
-                "recent_orders_count": 0,
-                "average_order_value": 0,
-                "customer_tier": "new"
-            }
-
-    def _determine_customer_tier(self, total_spent, recent_orders_count):
-        if total_spent >= 10000 or recent_orders_count >= 10:
-            return "platinum"
-        elif total_spent >= 5000 or recent_orders_count >= 5:
-            return "gold"
-        elif total_spent >= 1000 or recent_orders_count >= 2:
-            return "silver"
-        else:
-            return "new"
-
-    def _get_simple_available_vouchers(self, shop_ids, user_id, current_subtotal, user_purchase_history):
-        if not shop_ids:
-            return []
-
-        current_date = timezone.now().date()
-
-        try:
-            vouchers = Voucher.objects.filter(
-                shop_id__in=shop_ids,
-                is_active=True,
-                start_date__lte=current_date,
-                end_date__gte=current_date,
-                minimum_spend__lte=current_subtotal
-            ).select_related('shop').only(
-                'id', 'name', 'code', 'discount_type', 'value',
-                'minimum_spend', 'maximum_usage', 'shop__name', 'shop__id', 'voucher_type'
-            ).order_by('-value')[:10]
-
-            general_vouchers = Voucher.objects.filter(
-                shop__isnull=True,
-                is_active=True,
-                start_date__lte=current_date,
-                end_date__gte=current_date,
-                minimum_spend__lte=current_subtotal
-            ).select_related('shop').only(
-                'id', 'name', 'code', 'discount_type', 'value',
-                'minimum_spend', 'maximum_usage', 'shop__name', 'shop__id', 'voucher_type'
-            ).order_by('-value')[:5]
-
-            all_vouchers = list(vouchers) + list(general_vouchers)
-            unique_vouchers = {v.id: v for v in all_vouchers}.values()
-
-            voucher_list = []
-            for voucher in unique_vouchers:
-                user = User.objects.filter(id=user_id).first()
-                user_has_used = False
-                if user:
-                    user_has_used = UserVoucherUsage.objects.filter(user=user, voucher=voucher).exists()
-                
-                if user_has_used:
-                    continue
-                
-                total_usage_count = UserVoucherUsage.objects.filter(voucher=voucher).count()
-                
-                if voucher.maximum_usage > 0 and total_usage_count >= voucher.maximum_usage:
-                    continue
-                
-                potential_savings = self._calculate_discount(voucher, Decimal(str(current_subtotal)))
-                
-                remaining_usage = None
-                if voucher.maximum_usage > 0:
-                    remaining_usage = voucher.maximum_usage - total_usage_count
-
-                voucher_data = {
-                    "id": str(voucher.id),
-                    "code": voucher.code,
-                    "name": voucher.name,
-                    "discount_type": voucher.discount_type,
-                    "value": float(voucher.value),
-                    "minimum_spend": float(voucher.minimum_spend),
-                    "maximum_usage": voucher.maximum_usage,
-                    "usage_count": total_usage_count,
-                    "remaining_usage": remaining_usage,
-                    "shop_name": voucher.shop.name if voucher.shop else "All Shops",
-                    "shop_id": str(voucher.shop.id) if voucher.shop else None,
-                    "description": self._get_voucher_description(voucher),
-                    "potential_savings": float(potential_savings),
-                    "customer_tier": "all",
-                    "voucher_type": voucher.voucher_type,
-                    "is_general": voucher.shop is None,
-                    "user_has_used": user_has_used
-                }
-                voucher_list.append(voucher_data)
-
-            if voucher_list:
-                grouped = {}
-                for v in voucher_list:
-                    shop_key = v['shop_name']
-                    if shop_key not in grouped:
-                        grouped[shop_key] = []
-                    grouped[shop_key].append(v)
-                
-                result = []
-                for shop_name, vouchers_in_shop in grouped.items():
-                    result.append({
-                        "category": shop_name,
-                        "vouchers": vouchers_in_shop
-                    })
-                return result
-            return []
-
-        except Exception as e:
-            logger.error(f"Error fetching vouchers: {str(e)}")
-            return []
-
-    def _get_voucher_description(self, voucher):
-        if voucher.discount_type == 'percentage':
-            desc = f"{voucher.value}% off"
-        else:
-            desc = f"₱{voucher.value} off"
-
-        if voucher.minimum_spend > 0:
-            desc += f" on orders over ₱{voucher.minimum_spend}"
-        
-        if voucher.maximum_usage > 0:
-            desc += f" • {voucher.maximum_usage} uses available"
-
-        return desc
-
     @action(detail=False, methods=['GET'], url_path='get_shipping_addresses')
     def get_shipping_addresses(self, request):
         user_id = request.GET.get("user_id")
@@ -28014,19 +28060,6 @@ class CheckoutOrder(viewsets.ViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-    def _calculate_discount(self, voucher, subtotal):
-        if isinstance(subtotal, float):
-            subtotal = Decimal(str(subtotal))
-
-        voucher_value = Decimal(str(voucher.value))
-
-        if voucher.discount_type == 'percentage':
-            discount = subtotal * (voucher_value / Decimal('100'))
-            return discount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-        elif voucher.discount_type == 'fixed':
-            return min(voucher_value, subtotal).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-        return Decimal('0')
-
     @action(detail=False, methods=['POST'], url_path='create_order')
     def create_order(self, request):
         user_id = request.data.get("user_id")
@@ -28139,10 +28172,11 @@ class CheckoutOrder(viewsets.ViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            # --- Collect unique shops for transaction fee division ---
-            unique_shops = set()
+            # --- Collect all cart items for even discount distribution ---
+            all_cart_items_list = []
             shop_item_totals = {}
             shop_products = {}
+            total_cart_items_count = 0
 
             subtotal = Decimal('0')
             stock_validation_errors = []
@@ -28155,17 +28189,31 @@ class CheckoutOrder(viewsets.ViewSet):
                 
                 price = Decimal(str(direct_variant.price)) if direct_variant.price else Decimal('0')
                 subtotal = price * direct_quantity
+                total_cart_items_count = 1
+                
+                # Store as a single cart item for discount calculation
+                all_cart_items_list.append({
+                    'shop_id': str(direct_product.shop.id) if direct_product.shop else None,
+                    'line_total': subtotal,
+                    'product': direct_product,
+                    'variant': direct_variant,
+                    'quantity': direct_quantity,
+                    'price': price,
+                    'is_direct': True,
+                    'cart_item': None
+                })
                 
                 if direct_product.shop:
                     shop_id = str(direct_product.shop.id)
-                    unique_shops.add(shop_id)
                     shop_item_totals[shop_id] = subtotal
                     shop_products[shop_id] = [{
                         'product': direct_product,
                         'variant': direct_variant,
                         'quantity': direct_quantity,
                         'price': price,
-                        'line_total': subtotal
+                        'line_total': subtotal,
+                        'is_direct': True,
+                        'cart_item': None
                     }]
                 
             else:
@@ -28191,10 +28239,10 @@ class CheckoutOrder(viewsets.ViewSet):
 
                     line_total = price * cart_item.quantity
                     subtotal += line_total
+                    total_cart_items_count += 1
 
                     if cart_item.product and cart_item.product.shop:
                         shop_id = str(cart_item.product.shop.id)
-                        unique_shops.add(shop_id)
                         shop_item_totals[shop_id] = shop_item_totals.get(shop_id, Decimal('0')) + line_total
                         
                         if shop_id not in shop_products:
@@ -28205,11 +28253,11 @@ class CheckoutOrder(viewsets.ViewSet):
                             'variant': cart_item.variant,
                             'quantity': cart_item.quantity,
                             'price': price,
-                            'line_total': line_total
+                            'line_total': line_total,
+                            'is_direct': False
                         })
                     elif cart_item.product and cart_item.product.customer:
                         seller_id = str(cart_item.product.customer.customer.id)
-                        unique_shops.add(seller_id)
                         shop_item_totals[seller_id] = shop_item_totals.get(seller_id, Decimal('0')) + line_total
                         
                         if seller_id not in shop_products:
@@ -28220,9 +28268,23 @@ class CheckoutOrder(viewsets.ViewSet):
                             'variant': cart_item.variant,
                             'quantity': cart_item.quantity,
                             'price': price,
-                            'line_total': line_total
+                            'line_total': line_total,
+                            'is_direct': False
                         })
+                    
+                    # Add to all cart items list for discount calculation
+                    all_cart_items_list.append({
+                        'shop_id': shop_id if cart_item.product and cart_item.product.shop else (seller_id if cart_item.product and cart_item.product.customer else None),
+                        'line_total': line_total,
+                        'cart_item': cart_item,
+                        'product': cart_item.product,
+                        'variant': cart_item.variant,
+                        'quantity': cart_item.quantity,
+                        'price': price,
+                        'is_direct': False
+                    })
 
+                    # Stock validation
                     if cart_item.variant:
                         if cart_item.quantity > cart_item.variant.quantity:
                             stock_validation_errors.append(
@@ -28240,8 +28302,9 @@ class CheckoutOrder(viewsets.ViewSet):
                         "details": stock_validation_errors
                     }, status=status.HTTP_400_BAD_REQUEST)
 
+            # --- Voucher discount calculation - EVEN SPLIT ACROSS ALL CART ITEMS ---
             discount_amount = Decimal('0')
-            discount_per_shop = {}
+            discount_per_cart_item = {}  # Store discount per cart item ID
             voucher = None
             current_date = timezone.now().date()
 
@@ -28272,18 +28335,34 @@ class CheckoutOrder(viewsets.ViewSet):
                     
                     discount_amount = self._calculate_discount(voucher, subtotal)
                     
-                    for shop_id, shop_total in shop_item_totals.items():
-                        if subtotal > 0:
-                            proportion = shop_total / subtotal
-                            discount_per_shop[shop_id] = (discount_amount * proportion).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-                        else:
-                            discount_per_shop[shop_id] = Decimal('0')
+                    # Split discount evenly across all cart items
+                    if total_cart_items_count > 0 and discount_amount > 0:
+                        even_discount_per_item = discount_amount / Decimal(str(total_cart_items_count))
+                        
+                        for idx, item in enumerate(all_cart_items_list):
+                            item_discount = even_discount_per_item.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                            
+                            # Use cart_item object as key if available, otherwise use index for direct checkout
+                            if item['cart_item']:
+                                discount_per_cart_item[str(item['cart_item'].id)] = item_discount
+                            else:
+                                discount_per_cart_item[f"direct_{idx}"] = item_discount
+                        
+                        # Handle rounding difference - add remainder to first item
+                        total_discount_applied = sum(discount_per_cart_item.values())
+                        if total_discount_applied != discount_amount:
+                            difference = discount_amount - total_discount_applied
+                            first_key = list(discount_per_cart_item.keys())[0]
+                            discount_per_cart_item[first_key] += difference.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
                             
                 except Voucher.DoesNotExist:
                     return Response(
                         {"error": "Invalid or expired voucher"},
                         status=status.HTTP_400_BAD_REQUEST
                     )
+
+            # Get unique shops for transaction fee division
+            unique_shops = set(shop_item_totals.keys())
 
             # --- Calculate shipping fees ---
             shipping_fees_breakdown = {}
@@ -28331,11 +28410,13 @@ class CheckoutOrder(viewsets.ViewSet):
                                 shipping_fees_breakdown[shop_id] = float(fee)
                                 total_delivery_fee += fee
                         else:
+                            processed_shops = set()
                             for cart_item in cart_items:
                                 if cart_item.product and cart_item.product.shop:
                                     shop = cart_item.product.shop
                                     shop_id = str(shop.id)
-                                    if shop_id not in shops_distances and shop.latitude and shop.longitude:
+                                    if shop_id not in processed_shops and shop.latitude and shop.longitude:
+                                        processed_shops.add(shop_id)
                                         distance = self._calculate_distance(
                                             customer_lat, customer_lng,
                                             float(shop.latitude), float(shop.longitude)
@@ -28354,11 +28435,11 @@ class CheckoutOrder(viewsets.ViewSet):
             # --- Calculate base total before transaction fee ---
             base_total = subtotal + total_delivery_fee - discount_amount
             
-            # --- Calculate transaction fee and division among shops ---
+            # --- Calculate transaction fee and division among shops (EVEN SPLIT) ---
             transaction_fee = self._calculate_transaction_fee(base_total, payment_method)
             total_amount = base_total + transaction_fee
             
-            # --- Calculate transaction fee per shop based on item value proportion ---
+            # --- Calculate transaction fee per shop - SPLIT EVENLY AMONG SHOPS ---
             transaction_fee_per_shop = {}
             number_of_shops = len(unique_shops)
             
@@ -28367,13 +28448,17 @@ class CheckoutOrder(viewsets.ViewSet):
                     single_shop_id = list(unique_shops)[0]
                     transaction_fee_per_shop[single_shop_id] = transaction_fee
                 else:
-                    for shop_id, shop_total in shop_item_totals.items():
-                        if subtotal > 0:
-                            proportion = shop_total / subtotal
-                            shop_fee = transaction_fee * proportion
-                            transaction_fee_per_shop[shop_id] = shop_fee.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-                        else:
-                            transaction_fee_per_shop[shop_id] = Decimal('0')
+                    # Split evenly among all shops
+                    even_split = transaction_fee / Decimal(str(number_of_shops))
+                    for shop_id in unique_shops:
+                        transaction_fee_per_shop[shop_id] = even_split.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                    
+                    # Handle rounding difference (add remainder to first shop)
+                    total_from_split = sum(transaction_fee_per_shop.values())
+                    if total_from_split != transaction_fee:
+                        difference = transaction_fee - total_from_split
+                        first_shop = list(transaction_fee_per_shop.keys())[0]
+                        transaction_fee_per_shop[first_shop] += difference
 
             initial_status = 'pending'
             
@@ -28405,7 +28490,8 @@ class CheckoutOrder(viewsets.ViewSet):
             
             if discount_amount > 0:
                 order.metadata['discount_amount'] = float(discount_amount)
-                order.metadata['discount_per_shop'] = {k: float(v) for k, v in discount_per_shop.items()}
+                order.metadata['discount_note'] = f"Discount of ₱{float(discount_amount):.2f} applied evenly across {total_cart_items_count} items"
+                order.metadata['discount_per_cart_item'] = {k: float(v) for k, v in discount_per_cart_item.items()}
             
             if shipping_method.lower() == "pickup" and 'cash' in payment_method.lower() and pickup_date:
                 order.metadata['pickup_date'] = pickup_date
@@ -28413,41 +28499,56 @@ class CheckoutOrder(viewsets.ViewSet):
             order.save(update_fields=['metadata'])
 
             cart_item_ids = []
-            checkout_items = []
+            checkout_items_response = []
 
-            # --- Create Checkout records: 1 per cart item ONLY for shops with 2+ items ---
+            # --- Create Checkout records: ONE checkout per cart item ---
             if is_direct_checkout:
-                # Direct product checkout (single item, always 1 checkout)
+                # Direct product checkout (single item)
                 shop_id = str(direct_product.shop.id) if direct_product.shop else None
                 
                 product_total = subtotal
                 shipping_fee_share = Decimal(str(shipping_fees_breakdown.get(shop_id, 0))) if shop_id else Decimal('0')
                 transaction_fee_share = transaction_fee_per_shop.get(shop_id, Decimal('0'))
-                discount_share = discount_per_shop.get(shop_id, Decimal('0'))
                 
-                shop_total = product_total + shipping_fee_share + transaction_fee_share - discount_share
+                # Get discount for this direct checkout item
+                discount_share = Decimal('0')
+                for key, disc in discount_per_cart_item.items():
+                    if key.startswith('direct_'):
+                        discount_share = disc
+                        break
+                
+                # Total for this checkout item
+                item_total = product_total + shipping_fee_share + transaction_fee_share - discount_share
                 
                 item_shipping_fee = shipping_fee_share.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                item_transaction_fee = transaction_fee_share.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                item_discount = discount_share.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
                 item_distance = shops_distances.get(shop_id, {}).get('distance_km', None) if shop_id else None
                 
                 product_image_url = None
                 if direct_product.productmedia_set.exists():
                     first_media = direct_product.productmedia_set.first()
                     if first_media and first_media.file_data:
-                        from api.utils.storage_utils import convert_s3_to_public_url
-                        product_image_url = convert_s3_to_public_url(first_media.file_data.url)
+                        try:
+                            from api.utils.storage_utils import convert_s3_to_public_url
+                            product_image_url = convert_s3_to_public_url(first_media.file_data.url)
+                        except Exception:
+                            product_image_url = first_media.file_data.url
                 
                 variant_image_url = None
                 if direct_variant.image:
-                    from api.utils.storage_utils import convert_s3_to_public_url
-                    variant_image_url = convert_s3_to_public_url(direct_variant.image.url)
+                    try:
+                        from api.utils.storage_utils import convert_s3_to_public_url
+                        variant_image_url = convert_s3_to_public_url(direct_variant.image.url)
+                    except Exception:
+                        variant_image_url = direct_variant.image.url
 
                 checkout_item = Checkout.objects.create(
                     order=order,
                     cart_item=None,
                     voucher=voucher,
                     quantity=direct_quantity,
-                    total_amount=shop_total,
+                    total_amount=item_total.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP),
                     status='pending',
                     remarks=remarks[:500] if remarks else None,
                     direct_product_id=direct_product.id,
@@ -28458,11 +28559,13 @@ class CheckoutOrder(viewsets.ViewSet):
                     direct_shop_id=direct_product.shop.id if direct_product.shop else None,
                     direct_shop_name=direct_product.shop.name if direct_product.shop else None,
                     shipping_fee=float(item_shipping_fee),
+                    transaction_fee=float(item_transaction_fee),
+                    discount_applied=float(item_discount),
                     distance_km=float(item_distance) if item_distance else None
                 )
 
                 cart_item_ids.append(f"direct_{direct_product.id}_{direct_variant.id}")
-                checkout_items.append({
+                checkout_items_response.append({
                     "id": str(checkout_item.id),
                     "cart_item_id": f"direct_{direct_product.id}",
                     "product_name": direct_product.name,
@@ -28475,23 +28578,21 @@ class CheckoutOrder(viewsets.ViewSet):
                     "price": float(direct_variant.price),
                     "product_total": float(product_total),
                     "shipping_fee": float(shipping_fee_share),
-                    "transaction_fee_share": float(transaction_fee_share),
-                    "discount_share": float(discount_share),
-                    "total_amount": float(shop_total),
+                    "transaction_fee": float(transaction_fee_share),
+                    "discount_applied": float(discount_share),
+                    "total_amount": float(item_total),
                     "distance_km": float(item_distance) if item_distance else None,
                     "status": "pending",
                     "product_image": variant_image_url or product_image_url,
-                    "is_refundable": direct_variant.is_refundable or getattr(direct_product, 'is_refundable', False),
-                    "is_grouped": True,
-                    "products_in_shop": 1
+                    "is_refundable": direct_variant.is_refundable or getattr(direct_product, 'is_refundable', False)
                 })
                 
             else:
-                # Create Checkout records based on shop item count
+                # Create ONE Checkout per cart item with even discount distribution
                 for shop_id, products in shop_products.items():
+                    # Get shop-level fees
                     shop_shipping_fee = Decimal(str(shipping_fees_breakdown.get(shop_id, 0))) if shop_id else Decimal('0')
                     shop_transaction_fee_share = transaction_fee_per_shop.get(shop_id, Decimal('0'))
-                    shop_discount_share = discount_per_shop.get(shop_id, Decimal('0'))
                     
                     item_distance = shops_distances.get(shop_id, {}).get('distance_km', None) if shop_id else None
                     product_count = len(products)
@@ -28499,9 +28600,7 @@ class CheckoutOrder(viewsets.ViewSet):
                     # Calculate total product value for this shop
                     shop_product_total = sum(p['line_total'] for p in products)
                     
-                    if product_count == 1:
-                        # SINGLE ITEM SHOP: Create 1 Checkout (grouped)
-                        product_data = products[0]
+                    for idx, product_data in enumerate(products):
                         cart_item = product_data.get('cart_item')
                         product_obj = product_data['product']
                         variant = product_data.get('variant')
@@ -28509,11 +28608,21 @@ class CheckoutOrder(viewsets.ViewSet):
                         price = product_data['price']
                         line_total = product_data['line_total']
                         
-                        # All fees go to this single item
-                        shipping_fee_share = shop_shipping_fee
-                        transaction_fee_share = shop_transaction_fee_share
-                        discount_share = shop_discount_share
+                        # Calculate proportional share of fees based on product value
+                        if shop_product_total > 0:
+                            proportion = line_total / shop_product_total
+                            shipping_fee_share = shop_shipping_fee * proportion
+                            transaction_fee_share = shop_transaction_fee_share * proportion
+                        else:
+                            shipping_fee_share = Decimal('0')
+                            transaction_fee_share = Decimal('0')
                         
+                        # Get discount for this specific cart item (evenly distributed)
+                        discount_share = Decimal('0')
+                        if cart_item and str(cart_item.id) in discount_per_cart_item:
+                            discount_share = discount_per_cart_item[str(cart_item.id)]
+                        
+                        # Total for this specific cart item (checkout)
                         item_total = line_total + shipping_fee_share + transaction_fee_share - discount_share
                         
                         # Get product image
@@ -28533,22 +28642,25 @@ class CheckoutOrder(viewsets.ViewSet):
                                 except Exception:
                                     product_image_url = first_media.file_data.url
                         
+                        # Create ONE Checkout per cart item (1:1 relationship)
                         checkout_item = Checkout.objects.create(
                             order=order,
                             cart_item=cart_item,
-                            voucher=voucher if shop_id == list(shop_products.keys())[0] else None,
+                            voucher=voucher if shop_id == list(shop_products.keys())[0] and idx == 0 else None,
                             quantity=quantity,
                             total_amount=item_total.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP),
                             status='pending',
                             remarks=remarks[:500] if remarks else None,
                             shipping_fee=float(shipping_fee_share.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)),
+                            transaction_fee=float(transaction_fee_share.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)),
+                            discount_applied=float(discount_share.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)),
                             distance_km=float(item_distance) if item_distance else None
                         )
                         
                         if cart_item:
                             cart_item_ids.append(str(cart_item.id))
                         
-                        checkout_items.append({
+                        checkout_items_response.append({
                             "id": str(checkout_item.id),
                             "cart_item_id": str(cart_item.id) if cart_item else None,
                             "product_id": str(product_obj.id),
@@ -28561,100 +28673,19 @@ class CheckoutOrder(viewsets.ViewSet):
                             "price": float(price),
                             "product_total": float(line_total),
                             "shipping_fee": float(shipping_fee_share),
-                            "transaction_fee_share": float(transaction_fee_share),
-                            "discount_share": float(discount_share),
+                            "transaction_fee": float(transaction_fee_share),
+                            "discount_applied": float(discount_share),
                             "total_amount": float(item_total),
+                            "proportion": float(proportion) if shop_product_total > 0 else None,
                             "distance_km": float(item_distance) if item_distance else None,
                             "status": "pending",
                             "product_image": product_image_url,
                             "is_refundable": variant.is_refundable if variant else getattr(product_obj, 'is_refundable', False),
-                            "is_grouped": True,
-                            "products_in_shop": 1
+                            "items_in_shop": product_count,
+                            "item_index": idx + 1
                         })
-                        
-                    else:
-                        # MULTIPLE ITEMS (2+): Create SEPARATE Checkout for EACH product
-                        for idx, product_data in enumerate(products):
-                            cart_item = product_data.get('cart_item')
-                            product_obj = product_data['product']
-                            variant = product_data.get('variant')
-                            quantity = product_data['quantity']
-                            price = product_data['price']
-                            line_total = product_data['line_total']
-                            
-                            # Calculate proportional share of fees based on product value
-                            if shop_product_total > 0:
-                                proportion = line_total / shop_product_total
-                                shipping_fee_share = shop_shipping_fee * proportion
-                                transaction_fee_share = shop_transaction_fee_share * proportion
-                                discount_share = shop_discount_share * proportion
-                            else:
-                                shipping_fee_share = Decimal('0')
-                                transaction_fee_share = Decimal('0')
-                                discount_share = Decimal('0')
-                            
-                            # Total for this specific cart item
-                            item_total = line_total + shipping_fee_share + transaction_fee_share - discount_share
-                            
-                            # Get product image
-                            product_image_url = None
-                            if variant and variant.image:
-                                try:
-                                    from api.utils.storage_utils import convert_s3_to_public_url
-                                    product_image_url = convert_s3_to_public_url(variant.image.url)
-                                except Exception:
-                                    product_image_url = variant.image.url
-                            elif product_obj and product_obj.productmedia_set.exists():
-                                first_media = product_obj.productmedia_set.first()
-                                if first_media and first_media.file_data:
-                                    try:
-                                        from api.utils.storage_utils import convert_s3_to_public_url
-                                        product_image_url = convert_s3_to_public_url(first_media.file_data.url)
-                                    except Exception:
-                                        product_image_url = first_media.file_data.url
-                            
-                            # Create ONE Checkout per cart item (separate)
-                            checkout_item = Checkout.objects.create(
-                                order=order,
-                                cart_item=cart_item,
-                                voucher=voucher if shop_id == list(shop_products.keys())[0] and idx == 0 else None,
-                                quantity=quantity,
-                                total_amount=item_total.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP),
-                                status='pending',
-                                remarks=remarks[:500] if remarks else None,
-                                shipping_fee=float(shipping_fee_share.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)),
-                                distance_km=float(item_distance) if item_distance else None
-                            )
-                            
-                            if cart_item:
-                                cart_item_ids.append(str(cart_item.id))
-                            
-                            checkout_items.append({
-                                "id": str(checkout_item.id),
-                                "cart_item_id": str(cart_item.id) if cart_item else None,
-                                "product_id": str(product_obj.id),
-                                "product_name": product_obj.name,
-                                "variant_id": str(variant.id) if variant else None,
-                                "variant_title": variant.title if variant else None,
-                                "shop_id": shop_id,
-                                "shop_name": shops_distances.get(shop_id, {}).get('shop_name', 'Unknown Shop'),
-                                "quantity": quantity,
-                                "price": float(price),
-                                "product_total": float(line_total),
-                                "shipping_fee": float(shipping_fee_share),
-                                "transaction_fee_share": float(transaction_fee_share),
-                                "discount_share": float(discount_share),
-                                "total_amount": float(item_total),
-                                "proportion": float(proportion) if shop_product_total > 0 else None,
-                                "distance_km": float(item_distance) if item_distance else None,
-                                "status": "pending",
-                                "product_image": product_image_url,
-                                "is_refundable": variant.is_refundable if variant else getattr(product_obj, 'is_refundable', False),
-                                "is_grouped": False,
-                                "products_in_shop": product_count,
-                                "item_index": idx + 1
-                            })
 
+            # Create payment record
             Payment.objects.create(
                 order=order,
                 amount=total_amount,
@@ -28662,6 +28693,7 @@ class CheckoutOrder(viewsets.ViewSet):
                 status='pending'
             )
 
+            # Create voucher usage if voucher was applied
             if voucher:
                 UserVoucherUsage.objects.create(
                     user=user,
@@ -28670,8 +28702,10 @@ class CheckoutOrder(viewsets.ViewSet):
                     discount_amount=discount_amount
                 )
 
+            # Decrease stock for all items
             self._decrease_stock_for_order(order)
 
+            # Build breakdown messages
             breakdown_message = ""
             if shipping_fees_breakdown:
                 breakdown_parts = []
@@ -28688,25 +28722,20 @@ class CheckoutOrder(viewsets.ViewSet):
                 for shop_id, fee in transaction_fee_per_shop.items():
                     shop_name = shops_distances.get(shop_id, {}).get('shop_name', 'Unknown Shop')
                     fee_parts.append(f"{shop_name}: ₱{float(fee):.2f}")
-                transaction_fee_breakdown_message = f" (Split among {number_of_shops} shops: {' | '.join(fee_parts)})"
+                transaction_fee_breakdown_message = f" (Split evenly among {number_of_shops} shops: {' | '.join(fee_parts)})"
             
             # Build discount breakdown message
             discount_breakdown_message = ""
-            if number_of_shops > 1 and discount_per_shop:
-                discount_parts = []
-                for shop_id, disc in discount_per_shop.items():
-                    shop_name = shops_distances.get(shop_id, {}).get('shop_name', 'Unknown Shop')
-                    if float(disc) > 0:
-                        discount_parts.append(f"{shop_name}: ₱{float(disc):.2f}")
-                if discount_parts:
-                    discount_breakdown_message = f" Discount split: {' | '.join(discount_parts)}"
+            if discount_amount > 0 and total_cart_items_count > 0:
+                discount_per_item_amount = discount_amount / Decimal(str(total_cart_items_count))
+                discount_breakdown_message = f" Discount of ₱{float(discount_amount):.2f} split evenly across {total_cart_items_count} items (₱{float(discount_per_item_amount):.2f} per item)"
 
             response_data = {
                 "success": True,
                 "message": "Order created successfully. Waiting for seller confirmation.",
                 "order_id": str(order.order),
                 "cart_item_ids": cart_item_ids,
-                "checkout_items": checkout_items,
+                "checkout_items": checkout_items_response,
                 "total_amount": float(total_amount),
                 "subtotal": float(subtotal),
                 "total_delivery_fee": float(total_delivery_fee),
@@ -28721,10 +28750,12 @@ class CheckoutOrder(viewsets.ViewSet):
                     for shop_id, info in shops_distances.items()
                 ],
                 "discount_applied": float(discount_amount),
-                "discount_breakdown": {k: float(v) for k, v in discount_per_shop.items()},
+                "discount_per_item_count": total_cart_items_count,
+                "discount_per_item_amount": float(discount_amount / Decimal(str(total_cart_items_count))) if total_cart_items_count > 0 and discount_amount > 0 else 0,
                 "transaction_fee": float(transaction_fee),
                 "transaction_fee_breakdown": {k: float(v) for k, v in transaction_fee_per_shop.items()},
                 "number_of_shops": number_of_shops,
+                "number_of_items": total_cart_items_count,
                 "voucher_used": voucher.code if voucher else None,
                 "status": "pending_shipment",
                 "payment_method": payment_method,
@@ -28746,25 +28777,24 @@ class CheckoutOrder(viewsets.ViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-
     @action(detail=False, methods=['GET'], url_path='get_order_details/(?P<order_id>[^/.]+)')
     def get_order_details(self, request, order_id=None):
         try:
             order = get_object_or_404(Order, order=order_id)
-            latest_delivery = Delivery.objects.filter(order=order).order_by('-created_at').first()
-            shipping_status = self._get_shipping_status(order.status, latest_delivery.status if latest_delivery else None)
-
+            
+            # Get checkout items for this order
+            checkout_items = Checkout.objects.filter(order=order)
+            
             order_data = {
                 'order_id': str(order.order),
-                'status': shipping_status,
-                'original_status': order.status,
+                'status': order.status,
                 'approval': order.approval,
-                'total_amount': str(order.total_amount),
+                'total_amount': float(order.total_amount),
                 'payment_method': order.payment_method,
                 'delivery_method': order.delivery_method,
                 'delivery_address': order.delivery_address_text,
-                'created_at': order.created_at,
-                'updated_at': order.updated_at,
+                'created_at': order.created_at.isoformat(),
+                'updated_at': order.updated_at.isoformat(),
                 'user': {
                     'id': str(order.user.id),
                     'username': order.user.username,
@@ -28772,12 +28802,28 @@ class CheckoutOrder(viewsets.ViewSet):
                     'first_name': order.user.first_name,
                     'last_name': order.user.last_name,
                 },
-                'pickup_date': order.metadata.get('pickup_date') if order.metadata else None
+                'pickup_date': order.metadata.get('pickup_date') if order.metadata else None,
+                'transaction_fee': order.metadata.get('transaction_fee') if order.metadata else None,
+                'transaction_fee_note': order.metadata.get('transaction_fee_note') if order.metadata else None,
+                'discount_amount': order.metadata.get('discount_amount') if order.metadata else None,
+                'discount_note': order.metadata.get('discount_note') if order.metadata else None,
+                'checkout_items': []
             }
             
-            if order.metadata and order.metadata.get('transaction_fee'):
-                order_data['transaction_fee'] = order.metadata['transaction_fee']
-                order_data['transaction_fee_note'] = order.metadata.get('transaction_fee_note', "5% transaction fee capped at ₱50 applied")
+            # Add checkout items with their transaction fees and discount amounts
+            for checkout_item in checkout_items:
+                order_data['checkout_items'].append({
+                    'id': str(checkout_item.id),
+                    'product_name': checkout_item.direct_product_name or (checkout_item.cart_item.product.name if checkout_item.cart_item and checkout_item.cart_item.product else None),
+                    'quantity': checkout_item.quantity,
+                    'total_amount': float(checkout_item.total_amount),
+                    'shipping_fee': float(checkout_item.shipping_fee) if checkout_item.shipping_fee else 0,
+                    'transaction_fee': float(checkout_item.transaction_fee) if checkout_item.transaction_fee else 0,
+                    'discount_applied': float(checkout_item.discount_applied) if hasattr(checkout_item, 'discount_applied') and checkout_item.discount_applied else 0,
+                    'status': checkout_item.status,
+                    'remarks': checkout_item.remarks,
+                    'created_at': checkout_item.created_at.isoformat(),
+                })
 
             if order.shipping_address:
                 order_data['shipping_address'] = {
@@ -28799,34 +28845,6 @@ class CheckoutOrder(viewsets.ViewSet):
                 {'error': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-
-    def _get_shipping_status(self, order_status, delivery_status=None):
-        status_mapping = {
-            'pending': 'pending_shipment',
-            'processing': 'processing',
-            'ready_to_ship': 'ready_to_ship',
-            'waiting_for_rider': 'waiting_for_rider',
-            'shipped': 'shipped',
-            'to_deliver': 'to_deliver',
-            'delivered': 'delivered',
-            'completed': 'completed',
-            'cancelled': 'cancelled',
-            'ready_for_pickup': 'ready_for_pickup',
-            'picked_up': 'picked_up',
-        }
-
-        if delivery_status in ('pending', 'pending_offer'):
-            return 'waiting_for_rider'
-
-        if delivery_status:
-            delivery_map = {
-                'accepted': 'shipped',
-                'picked_up': 'to_deliver',
-                'delivered': 'delivered',
-            }
-            return delivery_map.get(delivery_status, status_mapping.get(order_status, 'pending_shipment'))
-
-        return status_mapping.get(order_status, 'pending_shipment')
 
     @action(detail=False, methods=['POST'], url_path='add_receipt')
     def add_receipt(self, request):
@@ -28888,614 +28906,6 @@ class CheckoutOrder(viewsets.ViewSet):
                 'success': False,
                 'error': str(e)
             }, status=500)
-
-    @action(detail=False, methods=['POST'], url_path='initiate_maya_payment')
-    def initiate_maya_payment(self, request):
-        enable_sandbox = getattr(settings, 'ENABLE_SANDBOX', False)
-        if not enable_sandbox:
-            return Response({
-                'success': False,
-                'error': 'Maya sandbox payment is not enabled'
-            }, status=status.HTTP_403_FORBIDDEN)
-
-        order_id = request.data.get('order_id')
-        user_id = request.data.get('user_id')
-        platform = request.data.get('platform', 'web')
-        is_mobile = platform == 'mobile'
-
-        if not order_id or not user_id:
-            return Response({
-                'success': False,
-                'error': 'order_id and user_id are required'
-            }, status=status.HTTP_400_BAD_REQUEST)
-
-        try:
-            order = get_object_or_404(Order, order=order_id, user_id=user_id)
-
-            if order.status != 'pending':
-                return Response({
-                    'success': False,
-                    'error': f'Order cannot be processed for payment. Current status: {order.status}'
-                }, status=status.HTTP_400_BAD_REQUEST)
-
-            if order.payment_method.lower() != 'maya':
-                return Response({
-                    'success': False,
-                    'error': 'This order is not set for Maya payment'
-                }, status=status.HTTP_400_BAD_REQUEST)
-
-            checkout_items = Checkout.objects.filter(order=order).select_related('cart_item__product', 'cart_item__variant')
-
-            if not checkout_items.exists():
-                return Response({
-                    'success': False,
-                    'error': 'No checkout items found for this order'
-                }, status=status.HTTP_404_NOT_FOUND)
-
-            items = []
-            for checkout_item in checkout_items:
-                cart_item = checkout_item.cart_item
-                if cart_item:
-                    product = cart_item.product
-                    variant = cart_item.variant
-
-                    item_name = product.name if product else "Unknown Product"
-                    if variant and variant.title:
-                        item_name = f"{item_name} - {variant.title}"
-
-                    unit_price = 0.0
-                    if checkout_item.total_amount and checkout_item.quantity > 0:
-                        unit_price = float(checkout_item.total_amount) / checkout_item.quantity
-                    elif variant and variant.price:
-                        unit_price = float(variant.price)
-                    elif product and hasattr(product, 'price') and product.price:
-                        unit_price = float(product.price)
-
-                    items.append({
-                        "name": item_name[:128],
-                        "quantity": str(checkout_item.quantity),
-                        "totalAmount": {
-                            "value": float(checkout_item.total_amount),
-                            "currency": "PHP"
-                        }
-                    })
-
-            reference = str(uuid.uuid4())
-            base_url = request.build_absolute_uri('/')
-            platform_param = platform
-
-            success_url = f"{base_url}api/checkout-order/maya-success/?order_id={order_id}&platform={platform_param}"
-            failure_url = f"{base_url}api/checkout-order/maya-failure/?order_id={order_id}&platform={platform_param}"
-            cancel_url = f"{base_url}api/checkout-order/maya-cancel/?order_id={order_id}&platform={platform_param}"
-
-            payment_data = {
-                "totalAmount": {
-                    "value": float(order.total_amount),
-                    "currency": "PHP"
-                },
-                "requestReferenceNumber": reference,
-                "redirectUrl": {
-                    "success": success_url,
-                    "failure": failure_url,
-                    "cancel": cancel_url,
-                }
-            }
-
-            order.metadata = order.metadata or {}
-            order.metadata['maya_reference'] = reference
-            order.metadata['platform'] = platform
-            order.save(update_fields=['metadata'])
-
-            maya_public_key = settings.MAYA_SANDBOX.get('PUBLIC_KEY', '')
-            credentials = base64.b64encode(f"{maya_public_key}:".encode()).decode()
-
-            maya_api_response = requests.post(
-                f"{settings.MAYA_SANDBOX['BASE_URL']}/payby/v2/paymaya/payments",
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": f"Basic {credentials}"
-                },
-                json=payment_data,
-                timeout=30
-            )
-
-            if maya_api_response.status_code not in [200, 201]:
-                logger.error(f"Maya API error: {maya_api_response.status_code} - {maya_api_response.text}")
-                return Response({
-                    'success': False,
-                    'error': 'Maya API error',
-                    'details': maya_api_response.text
-                }, status=status.HTTP_400_BAD_REQUEST)
-
-            maya_response = maya_api_response.json()
-
-            return Response({
-                'success': True,
-                'message': 'Maya payment initiated successfully',
-                'order_id': str(order.order),
-                'maya_checkout_id': maya_response.get('paymentId'),
-                'redirect_url': maya_response.get('redirectUrl'),
-                'reference_number': reference,
-                'total_amount': float(order.total_amount),
-                'items': items,
-                'sandbox_mode': True,
-                'platform': platform,
-                'is_mobile': is_mobile,
-                'test_card': {
-                    'message': 'For sandbox testing, use:',
-                    'card_number': '5123450000000008',
-                    'expiry': '12/25',
-                    'cvv': '123',
-                    'otp': '123456'
-                }
-            })
-
-        except Order.DoesNotExist:
-            return Response({
-                'success': False,
-                'error': 'Order not found'
-            }, status=status.HTTP_404_NOT_FOUND)
-        except Exception as e:
-            logger.error(f"Error initiating Maya payment: {str(e)}")
-            return Response({
-                'success': False,
-                'error': 'Failed to initiate Maya payment',
-                'details': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    @action(detail=False, methods=['GET'], url_path='maya-success')
-    def maya_success(self, request):
-        order_id = request.GET.get('order_id')
-        platform = request.GET.get('platform', 'web')
-        is_mobile = platform == 'mobile'
-
-        if not order_id:
-            return Response({
-                'success': False,
-                'error': 'Order ID not provided'
-            }, status=status.HTTP_400_BAD_REQUEST)
-
-        try:
-            order = get_object_or_404(Order, order=order_id)
-            stored_platform = order.metadata.get('platform', 'web') if order.metadata else 'web'
-            final_platform = platform if platform != 'web' else stored_platform
-            final_is_mobile = final_platform == 'mobile'
-
-            order.status = 'processing'
-            order.save(update_fields=['status'])
-
-            payment, created = Payment.objects.get_or_create(
-                order=order,
-                defaults={
-                    'amount': order.total_amount,
-                    'method': 'Maya',
-                    'status': 'success'
-                }
-            )
-
-            if not created:
-                payment.status = 'success'
-                payment.save(update_fields=['status'])
-
-            self._process_seller_payments(order)
-
-            if final_is_mobile:
-                mobile_redirect_url = f"crimsotechreactnative://order-successful/{order_id}"
-                html_content = f"""
-                <!DOCTYPE html>
-                <html>
-                <head>
-                    <title>Payment Successful - Redirecting...</title>
-                    <meta charset="UTF-8">
-                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                    <style>
-                        body {{
-                            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-                            display: flex;
-                            justify-content: center;
-                            align-items: center;
-                            height: 100vh;
-                            margin: 0;
-                            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                            color: white;
-                        }}
-                        .container {{
-                            text-align: center;
-                            padding: 20px;
-                        }}
-                        .spinner {{
-                            border: 4px solid rgba(255, 255, 255, 0.3);
-                            border-radius: 50%;
-                            border-top: 4px solid white;
-                            width: 40px;
-                            height: 40px;
-                            animation: spin 1s linear infinite;
-                            margin: 20px auto;
-                        }}
-                        @keyframes spin {{
-                            0% {{ transform: rotate(0deg); }}
-                            100% {{ transform: rotate(360deg); }}
-                        }}
-                        .message {{
-                            font-size: 18px;
-                            margin-top: 20px;
-                        }}
-                        .button {{
-                            display: inline-block;
-                            margin-top: 20px;
-                            padding: 12px 24px;
-                            background-color: white;
-                            color: #667eea;
-                            text-decoration: none;
-                            border-radius: 8px;
-                            font-weight: bold;
-                            cursor: pointer;
-                            border: none;
-                            font-size: 16px;
-                        }}
-                    </style>
-                </head>
-                <body>
-                    <div class="container">
-                        <div class="spinner"></div>
-                        <div class="message">Payment successful! Redirecting back to app...</div>
-                        <button class="button" onclick="redirectToApp()">Return to App</button>
-                    </div>
-                    <script>
-                        function redirectToApp() {{
-                            window.location.href = '{mobile_redirect_url}';
-                        }}
-                        setTimeout(function() {{
-                            redirectToApp();
-                        }}, 1000);
-                        if (window.ReactNativeWebView) {{
-                            window.ReactNativeWebView.postMessage('redirect:{mobile_redirect_url}');
-                        }}
-                    </script>
-                </body>
-                </html>
-                """
-                return HttpResponse(html_content, content_type='text/html')
-
-            frontend_url = getattr(settings, 'FRONTEND_URL')
-            return redirect(f"{frontend_url}/order-successful/{order_id}")
-
-        except Exception as e:
-            logger.error(f"Error in Maya success callback: {str(e)}")
-            try:
-                order = Order.objects.get(order=order_id)
-                stored_platform = order.metadata.get('platform', 'web') if order.metadata else 'web'
-                error_final_platform = platform if platform != 'web' else stored_platform
-                error_final_is_mobile = error_final_platform == 'mobile'
-            except:
-                error_final_is_mobile = platform == 'mobile'
-
-            if error_final_is_mobile:
-                mobile_redirect_url = f"crimsotechreactnative://order-successful/{order_id}?error=payment_failed"
-                html_content = f"""
-                <!DOCTYPE html>
-                <html>
-                <head>
-                    <title>Payment Processing Error</title>
-                    <meta charset="UTF-8">
-                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                    <style>
-                        body {{
-                            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-                            display: flex;
-                            justify-content: center;
-                            align-items: center;
-                            height: 100vh;
-                            margin: 0;
-                            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
-                            color: white;
-                        }}
-                        .container {{
-                            text-align: center;
-                            padding: 20px;
-                        }}
-                        .message {{
-                            font-size: 18px;
-                            margin: 20px 0;
-                        }}
-                        .button {{
-                            display: inline-block;
-                            margin-top: 20px;
-                            padding: 12px 24px;
-                            background-color: white;
-                            color: #f5576c;
-                            text-decoration: none;
-                            border-radius: 8px;
-                            font-weight: bold;
-                            cursor: pointer;
-                            border: none;
-                            font-size: 16px;
-                        }}
-                    </style>
-                </head>
-                <body>
-                    <div class="container">
-                        <div class="message">Payment processing error. Please return to app.</div>
-                        <button class="button" onclick="redirectToApp()">Return to App</button>
-                    </div>
-                    <script>
-                        function redirectToApp() {{
-                            window.location.href = '{mobile_redirect_url}';
-                        }}
-                        setTimeout(function() {{
-                            redirectToApp();
-                        }}, 2000);
-                        if (window.ReactNativeWebView) {{
-                            window.ReactNativeWebView.postMessage('redirect:{mobile_redirect_url}');
-                        }}
-                    </script>
-                </body>
-                </html>
-                """
-                return HttpResponse(html_content, content_type='text/html')
-
-            frontend_url = getattr(settings, 'FRONTEND_URL')
-            return redirect(f"{frontend_url}/order-successful/{order_id}?error=payment_failed")
-
-    @action(detail=False, methods=['GET'], url_path='maya-failure')
-    def maya_failure(self, request):
-        order_id = request.GET.get('order_id')
-        platform = request.GET.get('platform', 'web')
-        is_mobile = platform == 'mobile'
-
-        if order_id:
-            try:
-                order = Order.objects.get(order=order_id)
-                order.status = 'pending'
-                order.save(update_fields=['status'])
-            except Order.DoesNotExist:
-                pass
-
-        if is_mobile:
-            mobile_redirect_url = f"crimsotechreactnative://pay-order?order_id={order_id}&status=failed"
-            html_content = f"""
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <title>Payment Failed</title>
-                <meta charset="UTF-8">
-                <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <style>
-                    body {{
-                        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-                        display: flex;
-                        justify-content: center;
-                        align-items: center;
-                        height: 100vh;
-                        margin: 0;
-                        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
-                        color: white;
-                    }}
-                    .container {{
-                        text-align: center;
-                        padding: 20px;
-                    }}
-                    .message {{
-                        font-size: 18px;
-                        margin: 20px 0;
-                    }}
-                    .button {{
-                        display: inline-block;
-                        margin-top: 20px;
-                        padding: 12px 24px;
-                        background-color: white;
-                        color: #f5576c;
-                        text-decoration: none;
-                        border-radius: 8px;
-                        font-weight: bold;
-                        cursor: pointer;
-                        border: none;
-                        font-size: 16px;
-                    }}
-                </style>
-            </head>
-            <body>
-                <div class="container">
-                    <div class="message">Payment failed. Please try again.</div>
-                    <button class="button" onclick="redirectToApp()">Return to App</button>
-                </div>
-                <script>
-                    function redirectToApp() {{
-                        window.location.href = '{mobile_redirect_url}';
-                    }}
-                    setTimeout(function() {{
-                        redirectToApp();
-                    }}, 2000);
-                    if (window.ReactNativeWebView) {{
-                        window.ReactNativeWebView.postMessage('redirect:{mobile_redirect_url}');
-                    }}
-                </script>
-            </body>
-            </html>
-            """
-            return HttpResponse(html_content, content_type='text/html')
-
-        frontend_url = getattr(settings, 'FRONTEND_URL')
-        return redirect(f"{frontend_url}/pay-order?order_id={order_id}&status=failed")
-
-    @action(detail=False, methods=['GET'], url_path='maya-cancel')
-    def maya_cancel(self, request):
-        order_id = request.GET.get('order_id')
-        platform = request.GET.get('platform', 'web')
-        is_mobile = platform == 'mobile'
-
-        if is_mobile:
-            mobile_redirect_url = f"crimsotechreactnative://pay-order?order_id={order_id}&status=cancelled"
-            html_content = f"""
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <title>Payment Cancelled</title>
-                <meta charset="UTF-8">
-                <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <style>
-                    body {{
-                        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-                        display: flex;
-                        justify-content: center;
-                        align-items: center;
-                        height: 100vh;
-                        margin: 0;
-                        background: linear-gradient(135deg, #ffecd2 0%, #fcb69f 100%);
-                        color: #333;
-                    }}
-                    .container {{
-                        text-align: center;
-                        padding: 20px;
-                    }}
-                    .message {{
-                        font-size: 18px;
-                        margin: 20px 0;
-                    }}
-                    .button {{
-                        display: inline-block;
-                        margin-top: 20px;
-                        padding: 12px 24px;
-                        background-color: #fcb69f;
-                        color: white;
-                        text-decoration: none;
-                        border-radius: 8px;
-                        font-weight: bold;
-                        cursor: pointer;
-                        border: none;
-                        font-size: 16px;
-                    }}
-                </style>
-            </head>
-            <body>
-                <div class="container">
-                    <div class="message">Payment was cancelled.</div>
-                    <button class="button" onclick="redirectToApp()">Return to App</button>
-                </div>
-                <script>
-                    function redirectToApp() {{
-                        window.location.href = '{mobile_redirect_url}';
-                    }}
-                    setTimeout(function() {{
-                        redirectToApp();
-                    }}, 2000);
-                    if (window.ReactNativeWebView) {{
-                        window.ReactNativeWebView.postMessage('redirect:{mobile_redirect_url}');
-                    }}
-                </script>
-            </body>
-            </html>
-            """
-            return HttpResponse(html_content, content_type='text/html')
-
-        frontend_url = getattr(settings, 'FRONTEND_URL')
-        return redirect(f"{frontend_url}/pay-order?order_id={order_id}&status=cancelled")
-
-    @action(detail=False, methods=['GET'], url_path='verify_payment_status/(?P<order_id>[^/.]+)')
-    def verify_payment_status(self, request, order_id=None):
-        try:
-            order = get_object_or_404(Order, order=order_id)
-
-            payment_status = 'pending'
-            if hasattr(order, 'payment'):
-                payment_status = order.payment.status if order.payment else 'pending'
-
-            return Response({
-                'success': True,
-                'payment_status': payment_status,
-                'order_status': order.status,
-                'order_id': str(order.order)
-            })
-        except Order.DoesNotExist:
-            return Response({
-                'success': False,
-                'error': 'Order not found'
-            }, status=status.HTTP_404_NOT_FOUND)
-        except Exception as e:
-            logger.error(f"Error verifying payment status: {str(e)}")
-            return Response({
-                'success': False,
-                'error': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    def _process_seller_payments(self, order):
-        try:
-            checkout_items = Checkout.objects.filter(order=order).select_related(
-                'cart_item__product__shop__customer__customer'
-            )
-
-            for checkout_item in checkout_items:
-                cart_item = checkout_item.cart_item
-                if cart_item and cart_item.product and cart_item.product.shop:
-                    shop = cart_item.product.shop
-
-                    if shop.customer:
-                        seller_user = shop.customer.customer
-
-                        wallet, created = UserWallet.objects.get_or_create(
-                            user=seller_user,
-                            defaults={
-                                'available_balance': Decimal('0'),
-                                'pending_balance': Decimal('0')
-                            }
-                        )
-
-                        amount = checkout_item.total_amount
-                        wallet.pending_balance += amount
-                        wallet.save(update_fields=['pending_balance'])
-
-                        WalletTransaction.objects.create(
-                            wallet=wallet,
-                            amount=amount,
-                            transaction_type='credit',
-                            source_type='shop_sale',
-                            status='pending',
-                            shop=shop,
-                            order=order,
-                            user=seller_user
-                        )
-
-                        logger.info(f"Added ₱{amount} to pending balance for seller {seller_user.username}")
-
-        except Exception as e:
-            logger.error(f"Error processing seller payments: {str(e)}")
-
-    def _decrease_stock_for_order(self, order):
-        """Decrease stock for all items in an order"""
-        checkout_items = Checkout.objects.filter(order=order)
-        stock_errors = []
-
-        for checkout_item in checkout_items:
-            if checkout_item.direct_variant_id:
-                try:
-                    variant = Variants.objects.get(id=checkout_item.direct_variant_id)
-                    if checkout_item.quantity > variant.quantity:
-                        stock_errors.append(f"Insufficient stock for {variant.title}")
-                        continue
-                    variant.quantity -= checkout_item.quantity
-                    variant.save()
-                except Variants.DoesNotExist:
-                    stock_errors.append(f"Variant not found")
-
-            elif checkout_item.cart_item:
-                cart_item = checkout_item.cart_item
-                if cart_item.variant:
-                    variant = cart_item.variant
-                    if checkout_item.quantity > variant.quantity:
-                        stock_errors.append(f"Insufficient stock for {variant.title}")
-                        continue
-                    variant.quantity -= checkout_item.quantity
-                    variant.save()
-                elif cart_item.product and hasattr(cart_item.product, 'quantity'):
-                    product = cart_item.product
-                    if checkout_item.quantity > product.quantity:
-                        stock_errors.append(f"Insufficient stock for {product.name}")
-                        continue
-                    product.quantity -= checkout_item.quantity
-                    product.save()
-
-        return stock_errors
-
 
 
 class ShippingAddressViewSet(viewsets.ViewSet):  # Renamed to avoid conflict
@@ -29933,9 +29343,9 @@ class PurchasesBuyer(viewsets.ViewSet):
         if all(s == 'cancelled' for s in statuses):
             new_status = 'cancelled'
         elif all(s == 'completed' for s in statuses):
-            new_status = 'completed'  # ← Added this
+            new_status = 'completed'
         elif all(s in ['completed', 'delivered'] for s in statuses):
-            new_status = 'completed'  # ← All items are either completed or delivered
+            new_status = 'completed'  # All items are either completed or delivered
         elif all(s == 'delivered' for s in statuses):
             new_status = 'delivered'
         elif any(s == 'delivered' for s in statuses):
@@ -29950,7 +29360,6 @@ class PurchasesBuyer(viewsets.ViewSet):
         if order.status != new_status:
             order.status = new_status
             order.save(update_fields=['status'])
-            print(f"📦 Order {order.order} status updated to: {new_status} (checkout statuses: {statuses})")
 
         
     @action(detail=False, methods=['get'], url_path='user-purchases')
@@ -30071,7 +29480,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                             order.completed_at = timezone.now()
                         order.save(update_fields=['completed_at'])
                     except Exception as _e:
-                        print(f"DEBUG: Failed to set completed_at for order {order.order}: {_e}")
+                        pass
 
                 delivery_address = None
                 if order.shipping_address:
@@ -30079,10 +29488,17 @@ class PurchasesBuyer(viewsets.ViewSet):
                 elif order.delivery_address_text:
                     delivery_address = order.delivery_address_text
 
+                # Calculate total transaction fee by summing checkout.transaction_fee
+                total_transaction_fee = 0.0
+                for checkout in order.checkout_set.all():
+                    if hasattr(checkout, 'transaction_fee') and checkout.transaction_fee:
+                        total_transaction_fee += float(checkout.transaction_fee)
+
                 order_data = {
                     'order_id': str(order.order),
                     'status': order.status,
                     'total_amount': str(order.total_amount),
+                    'transaction_fee': str(total_transaction_fee),
                     'payment_method': order.payment_method,
                     'delivery_method': order.delivery_method,
                     'delivery_address': delivery_address,
@@ -30184,6 +29600,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                             'can_review': (item_status == 'delivered' or item_status == 'completed') and not has_reviewed,
                             'is_refundable': is_refundable,
                             'shipping_fee': str(getattr(checkout, 'shipping_fee', 0.00)),
+                            'transaction_fee': str(getattr(checkout, 'transaction_fee', 0.00)),
                             'distance_km': getattr(checkout, 'distance_km', None),
                         }
                         order_data['items'].append(item_data)
@@ -30273,6 +29690,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                                 'can_review': (item_status == 'delivered' or item_status == 'completed') and not has_reviewed,
                                 'is_refundable': is_refundable,
                                 'shipping_fee': str(getattr(checkout, 'shipping_fee', 0.00)),
+                                'transaction_fee': str(getattr(checkout, 'transaction_fee', 0.00)),
                             }
                             order_data['items'].append(item_data)
                         else:
@@ -30303,7 +29721,8 @@ class PurchasesBuyer(viewsets.ViewSet):
                                 'primary_image': None,
                                 'voucher_applied': None,
                                 'can_review': False,
-                                'is_refundable': False
+                                'is_refundable': False,
+                                'transaction_fee': str(getattr(checkout, 'transaction_fee', 0.00))
                             }
                             order_data['items'].append(item_data)
                     else:
@@ -30334,7 +29753,8 @@ class PurchasesBuyer(viewsets.ViewSet):
                             'primary_image': None,
                             'voucher_applied': None,
                             'can_review': False,
-                            'is_refundable': False
+                            'is_refundable': False,
+                            'transaction_fee': str(getattr(checkout, 'transaction_fee', 0.00))
                         }
                         order_data['items'].append(item_data)
                 
@@ -30363,8 +29783,6 @@ class PurchasesBuyer(viewsets.ViewSet):
             
         except Exception as e:
             import traceback
-            print(f"Error in user_purchases: {str(e)}")
-            print(traceback.format_exc())
             return Response(
                 {'error': 'Internal server error', 'details': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -30463,6 +29881,12 @@ class PurchasesBuyer(viewsets.ViewSet):
         elif order.delivery_address_text:
             delivery_address = order.delivery_address_text
         
+        # Calculate total transaction fee by summing checkout.transaction_fee
+        total_transaction_fee = 0.0
+        for checkout in order.checkout_set.all():
+            if hasattr(checkout, 'transaction_fee') and checkout.transaction_fee:
+                total_transaction_fee += float(checkout.transaction_fee)
+        
         items_data = []
         for checkout in order.checkout_set.all():
             if checkout.cart_item and checkout.cart_item.product:
@@ -30535,6 +29959,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                     } if checkout.voucher else None,
                     'can_review': (item_status == 'delivered' or item_status == 'completed') and not has_reviewed,
                     'shipping_fee': str(getattr(checkout, 'shipping_fee', 0.00)),
+                    'transaction_fee': str(getattr(checkout, 'transaction_fee', 0.00)),
                 }
                 items_data.append(item_data)
             else:
@@ -30564,7 +29989,8 @@ class PurchasesBuyer(viewsets.ViewSet):
                     'product_images': [],
                     'primary_image': None,
                     'voucher_applied': None,
-                    'can_review': False
+                    'can_review': False,
+                    'transaction_fee': str(getattr(checkout, 'transaction_fee', 0.00))
                 }
                 items_data.append(item_data)
         
@@ -30572,6 +29998,7 @@ class PurchasesBuyer(viewsets.ViewSet):
             'order_id': str(order.order),
             'status': order.status,
             'total_amount': str(order.total_amount),
+            'transaction_fee': str(total_transaction_fee),
             'payment_method': order.payment_method,
             'delivery_method': order.delivery_method,
             'delivery_address': delivery_address,
@@ -30805,6 +30232,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                         'is_refundable': is_refundable,
                         'return_deadline': (checkout.created_at + timedelta(days=14)).isoformat() if checkout.created_at else None,
                         'shipping_fee': str(getattr(checkout, 'shipping_fee', 0.00)),
+                        'transaction_fee': str(getattr(checkout, 'transaction_fee', 0.00)),
                         'distance_km': getattr(checkout, 'distance_km', None),
                         'value_added_tax_amount': str(item_tax),
                     }
@@ -30842,6 +30270,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                         'has_refunded': False,
                         'is_refundable': False,
                         'value_added_tax_amount': '0.00',
+                        'transaction_fee': str(getattr(checkout, 'transaction_fee', 0.00))
                     }
                     items_data.append(item_data)
             
@@ -30860,6 +30289,12 @@ class PurchasesBuyer(viewsets.ViewSet):
             elif hasattr(order, 'shipping_fee') and order.shipping_fee:
                 total_shipping_fee = float(order.shipping_fee)
 
+            # Calculate total transaction fee by summing checkout.transaction_fee
+            total_transaction_fee = 0.0
+            for checkout in order.checkout_set.all():
+                if hasattr(checkout, 'transaction_fee') and checkout.transaction_fee:
+                    total_transaction_fee += float(checkout.transaction_fee)
+
             order_summary = {
                 'subtotal': str(subtotal),
                 'shipping_fee': str(total_shipping_fee),
@@ -30867,18 +30302,9 @@ class PurchasesBuyer(viewsets.ViewSet):
                 'tax': str(total_tax),
                 'discount': '0.00',
                 'total': str(order.total_amount),
-                'transaction_fee': str(float(order.transaction_fee) if order.transaction_fee else 0.00),
-                'payment_fee': str(float(order.transaction_fee) if order.transaction_fee else 0.00),
+                'transaction_fee': str(total_transaction_fee),
+                'payment_fee': str(total_transaction_fee),
             }
-            
-            print(f"📊 ORDER SUMMARY FOR ORDER {order.order}:")
-            print(f"   - Subtotal: {subtotal}")
-            print(f"   - Total items: {total_items}")
-            print(f"   - Items count: {len(items_data)}")
-            print(f"   - Shipping fee: {total_shipping_fee}")
-            print(f"   - Tax (12%): {total_tax}")
-            print(f"   - Total: {order.total_amount}")
-            print(f"   - Order summary: {order_summary}")
             
             response_data = {
                 'order': {
@@ -30935,9 +30361,6 @@ class PurchasesBuyer(viewsets.ViewSet):
         except Exception as exc:
             logger.exception('Unhandled exception in view_order_detail for order %s user %s: %s', pk, user_id, exc)
             return Response({'error': 'An internal error occurred while fetching the order'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-            
-
 
     def _get_item_status(self, order, checkout):
         """Determine the correct status for an item"""
@@ -31095,15 +30518,10 @@ class PurchasesBuyer(viewsets.ViewSet):
             order.save(update_fields=['status', 'completed_at', 'refund_expire_date'])
 
             # Update all OrderShopStatus for this order to 'completed'
-            from django.utils import timezone
-            from datetime import timedelta
-
             OrderShopStatus.objects.filter(order=order).update(
                 status='completed',
                 refund_expire_date=timezone.now() + timedelta(days=1)
             )
-
-            print(f"✅ [COMPLETE] Order {order.order} marked as completed - all shop statuses set to 'completed'")
 
             delivery = Delivery.objects.filter(order=order).first()
             if delivery:
@@ -31333,9 +30751,6 @@ class PurchasesBuyer(viewsets.ViewSet):
         Cancel specific items from an order (not the entire order)
         Expected payload: {"checkout_ids": ["checkout_id_1", "checkout_id_2"]}
         """
-        from django.utils import timezone
-        from decimal import Decimal
-        
         user_id = request.headers.get('X-User-Id')
         if not user_id:
             return Response({'error': 'X-User-Id header is required'}, status=status.HTTP_400_BAD_REQUEST)
@@ -31376,7 +30791,7 @@ class PurchasesBuyer(viewsets.ViewSet):
             cancelled_count = 0
             cancelled_items = []
             cancelled_total = Decimal('0')
-            affected_shops = set()  # Track which shops have cancelled items
+            affected_shops = set()
             
             for checkout in checkouts:
                 # Only allow cancelling items with pending status
@@ -31421,7 +30836,6 @@ class PurchasesBuyer(viewsets.ViewSet):
             # Update OrderShopStatus for each affected shop
             for shop_id in affected_shops:
                 try:
-                    from api.models import Shop
                     shop = Shop.objects.get(id=shop_id)
                     order_shop_status, created = OrderShopStatus.objects.get_or_create(
                         order=order,
@@ -31440,14 +30854,12 @@ class PurchasesBuyer(viewsets.ViewSet):
                     if all_cancelled:
                         order_shop_status.status = 'cancelled'
                         order_shop_status.save(update_fields=['status'])
-                        print(f"✅ Shop {shop.name} status updated to 'cancelled' for order {order.order}")
                     else:
                         # If some items are still pending, keep as pending
                         has_pending = any(c.status == 'pending' for c in shop_checkouts)
                         if has_pending and order_shop_status.status != 'pending':
                             order_shop_status.status = 'pending'
                             order_shop_status.save(update_fields=['status'])
-                            print(f"✅ Shop {shop.name} status updated to 'pending' (some items pending) for order {order.order}")
                 except Shop.DoesNotExist:
                     pass
             
@@ -31487,10 +30899,6 @@ class PurchasesBuyer(viewsets.ViewSet):
     @action(detail=True, methods=['post'], url_path='complete-shop-item')
     def complete_shop_item(self, request, pk=None):
         """Buyer can mark a specific item as completed/received"""
-        print(f"🔥 [complete_item] Request received for order {pk}")
-        print(f"🔥 Request data: {request.data}")
-        print(f"🔥 Headers: {request.headers.get('X-User-Id')}")
-        
         user_id = request.headers.get('X-User-Id')
         if not user_id:
             return Response({'success': False, 'message': 'X-User-Id header is required'}, status=status.HTTP_400_BAD_REQUEST)
@@ -31504,14 +30912,12 @@ class PurchasesBuyer(viewsets.ViewSet):
             return Response({'success': False, 'message': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
 
         checkout_id = request.data.get('checkout_id')
-        print(f"🔥 checkout_id: {checkout_id}")
         
         if not checkout_id:
             return Response({'success': False, 'message': 'checkout_id is required'}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             checkout = Checkout.objects.get(id=checkout_id, order=order)
-            print(f"🔥 Found checkout: {checkout.id}, status: {checkout.status}")
         except Checkout.DoesNotExist:
             return Response({'success': False, 'message': 'Item not found'}, status=status.HTTP_404_NOT_FOUND)
 
@@ -31529,7 +30935,6 @@ class PurchasesBuyer(viewsets.ViewSet):
             # Mark this checkout as completed
             checkout.status = 'completed'
             checkout.save(update_fields=['status'])
-            print(f"✅ Checkout {checkout.id} marked as completed")
 
             # Get shop_id from request or from checkout
             shop_id = request.data.get('shop_id')
@@ -31541,10 +30946,6 @@ class PurchasesBuyer(viewsets.ViewSet):
             # Update OrderShopStatus for this shop
             if shop_id:
                 try:
-                    from api.models import Shop, OrderShopStatus
-                    from django.utils import timezone
-                    from datetime import timedelta
-                    
                     shop = Shop.objects.get(id=shop_id)
                     order_shop_status, created = OrderShopStatus.objects.get_or_create(
                         order=order,
@@ -31559,32 +30960,24 @@ class PurchasesBuyer(viewsets.ViewSet):
                             order_shop_status.status = 'completed'
                             order_shop_status.refund_expire_date = timezone.now() + timedelta(days=1)
                             order_shop_status.save(update_fields=['status', 'refund_expire_date'])
-                            print(f"✅ OrderShopStatus for {shop.name} updated to 'completed' with refund_expire_date {order_shop_status.refund_expire_date}")
                         elif order_shop_status.status != 'completed':
                             order_shop_status.status = 'completed'
                             order_shop_status.refund_expire_date = timezone.now() + timedelta(days=1)
                             order_shop_status.save(update_fields=['status', 'refund_expire_date'])
-                            print(f"✅ OrderShopStatus for {shop.name} updated to 'completed' with refund_expire_date")
-                    elif created:
-                        print(f"✅ Created new OrderShopStatus for {shop.name} with status 'completed' and refund_expire_date {order_shop_status.refund_expire_date}")
                 except Shop.DoesNotExist:
-                    print(f"⚠️ Shop {shop_id} not found")
-            else:
-                print(f"⚠️ No shop_id found for checkout {checkout.id}")
+                    pass
 
             # Update order status based on all checkouts
             self._update_order_status_from_checkouts(order)
 
             # Check if all items are completed
             all_completed = all(c.status == 'completed' for c in Checkout.objects.filter(order=order))
-            print(f"🔥 All items completed: {all_completed}")
 
             if all_completed:
                 order.status = 'completed'
                 order.completed_at = timezone.now()
                 order.refund_expire_date = order.completed_at + timedelta(days=1)
                 order.save(update_fields=['status', 'completed_at', 'refund_expire_date'])
-                print(f"✅ Order {order.order} marked as completed")
 
             return Response({
                 'success': True, 
@@ -31594,11 +30987,8 @@ class PurchasesBuyer(viewsets.ViewSet):
             }, status=status.HTTP_200_OK)
             
         except Exception as e:
-            import traceback
-            traceback.print_exc()
             logger.exception('Error marking item as completed: %s', e)
             return Response({'success': False, 'message': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
             
 
 class ReturnPurchaseBuyer(viewsets.ViewSet):
