@@ -28122,6 +28122,11 @@ class CheckoutOrder(viewsets.ViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
+            # --- Collect unique shops for transaction fee division ---
+            unique_shops = set()
+            shop_item_totals = {}  # Track total amount per shop for fee distribution
+            shop_products = {}  # Track products per shop for discount distribution
+
             subtotal = Decimal('0')
             stock_validation_errors = []
 
@@ -28133,6 +28138,18 @@ class CheckoutOrder(viewsets.ViewSet):
                 
                 price = Decimal(str(direct_variant.price)) if direct_variant.price else Decimal('0')
                 subtotal = price * direct_quantity
+                
+                if direct_product.shop:
+                    shop_id = str(direct_product.shop.id)
+                    unique_shops.add(shop_id)
+                    shop_item_totals[shop_id] = subtotal
+                    shop_products[shop_id] = [{
+                        'product': direct_product,
+                        'variant': direct_variant,
+                        'quantity': direct_quantity,
+                        'price': price,
+                        'line_total': subtotal
+                    }]
                 
             else:
                 for cart_item in cart_items:
@@ -28158,6 +28175,38 @@ class CheckoutOrder(viewsets.ViewSet):
                     line_total = price * cart_item.quantity
                     subtotal += line_total
 
+                    # Track shop totals for transaction fee distribution
+                    if cart_item.product and cart_item.product.shop:
+                        shop_id = str(cart_item.product.shop.id)
+                        unique_shops.add(shop_id)
+                        shop_item_totals[shop_id] = shop_item_totals.get(shop_id, Decimal('0')) + line_total
+                        
+                        if shop_id not in shop_products:
+                            shop_products[shop_id] = []
+                        shop_products[shop_id].append({
+                            'cart_item': cart_item,
+                            'product': cart_item.product,
+                            'variant': cart_item.variant,
+                            'quantity': cart_item.quantity,
+                            'price': price,
+                            'line_total': line_total
+                        })
+                    elif cart_item.product and cart_item.product.customer:
+                        seller_id = str(cart_item.product.customer.customer.id)
+                        unique_shops.add(seller_id)
+                        shop_item_totals[seller_id] = shop_item_totals.get(seller_id, Decimal('0')) + line_total
+                        
+                        if seller_id not in shop_products:
+                            shop_products[seller_id] = []
+                        shop_products[seller_id].append({
+                            'cart_item': cart_item,
+                            'product': cart_item.product,
+                            'variant': cart_item.variant,
+                            'quantity': cart_item.quantity,
+                            'price': price,
+                            'line_total': line_total
+                        })
+
                     if cart_item.variant:
                         if cart_item.quantity > cart_item.variant.quantity:
                             stock_validation_errors.append(
@@ -28176,6 +28225,7 @@ class CheckoutOrder(viewsets.ViewSet):
                     }, status=status.HTTP_400_BAD_REQUEST)
 
             discount_amount = Decimal('0')
+            discount_per_shop = {}
             voucher = None
             current_date = timezone.now().date()
 
@@ -28205,12 +28255,22 @@ class CheckoutOrder(viewsets.ViewSet):
                         )
                     
                     discount_amount = self._calculate_discount(voucher, subtotal)
+                    
+                    # Distribute discount proportionally to shops based on their subtotal
+                    for shop_id, shop_total in shop_item_totals.items():
+                        if subtotal > 0:
+                            proportion = shop_total / subtotal
+                            discount_per_shop[shop_id] = (discount_amount * proportion).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                        else:
+                            discount_per_shop[shop_id] = Decimal('0')
+                            
                 except Voucher.DoesNotExist:
                     return Response(
                         {"error": "Invalid or expired voucher"},
                         status=status.HTTP_400_BAD_REQUEST
                     )
 
+            # --- Calculate shipping fees ---
             shipping_fees_breakdown = {}
             shops_distances = {}
             total_delivery_fee = Decimal('0')
@@ -28281,15 +28341,40 @@ class CheckoutOrder(viewsets.ViewSet):
                                         shipping_fees_breakdown[shop_id] = float(fee)
                                         total_delivery_fee += fee
             
+            # --- Calculate base total before transaction fee ---
             base_total = subtotal + total_delivery_fee - discount_amount
+            
+            # --- Calculate transaction fee and division among shops ---
             transaction_fee = self._calculate_transaction_fee(base_total, payment_method)
             total_amount = base_total + transaction_fee
+            
+            # --- Calculate transaction fee per shop based on item value proportion ---
+            transaction_fee_per_shop = {}
+            number_of_shops = len(unique_shops)
+            
+            if number_of_shops > 0:
+                if number_of_shops == 1:
+                    # Single shop - entire transaction fee goes to that shop
+                    single_shop_id = list(unique_shops)[0]
+                    transaction_fee_per_shop[single_shop_id] = transaction_fee
+                else:
+                    # Multiple shops - divide transaction fee proportionally by item total
+                    for shop_id, shop_total in shop_item_totals.items():
+                        if subtotal > 0:
+                            proportion = shop_total / subtotal
+                            shop_fee = transaction_fee * proportion
+                            transaction_fee_per_shop[shop_id] = shop_fee.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                        else:
+                            transaction_fee_per_shop[shop_id] = Decimal('0')
 
             initial_status = 'pending'
             
             print(f"🔍 [CREATE ORDER] Final shipping_fees_breakdown: {shipping_fees_breakdown}")
             print(f"🔍 [CREATE ORDER] Total delivery fee: {total_delivery_fee}")
             print(f"🔍 [CREATE ORDER] Subtotal: {subtotal}, Discount: {discount_amount}, Total: {total_amount}")
+            print(f"🔍 [CREATE ORDER] Unique shops: {number_of_shops}")
+            print(f"🔍 [CREATE ORDER] Transaction fee per shop: {transaction_fee_per_shop}")
+            print(f"🔍 [CREATE ORDER] Discount per shop: {discount_per_shop}")
             
             order = Order.objects.create(
                 user=user,
@@ -28309,11 +28394,17 @@ class CheckoutOrder(viewsets.ViewSet):
                 order.metadata['transaction_fee_percentage'] = 5
                 order.metadata['transaction_fee_cap'] = 50
                 order.metadata['transaction_fee_note'] = f"Transaction fee of ₱{float(transaction_fee):.2f} (5% capped at ₱50) applied for {payment_method} payment"
+                order.metadata['transaction_fee_per_shop'] = {k: float(v) for k, v in transaction_fee_per_shop.items()}
+                order.metadata['number_of_shops'] = number_of_shops
             
             if total_delivery_fee > 0:
                 order.metadata['total_delivery_fee'] = float(total_delivery_fee)
                 order.metadata['delivery_fee_note'] = f"Total delivery fee of ₱{float(total_delivery_fee):.2f} (₱50 base for 3km, ₱10 per additional km, capped at ₱150 per shop)"
                 order.metadata['delivery_fees_by_shop'] = shipping_fees_breakdown
+            
+            if discount_amount > 0:
+                order.metadata['discount_amount'] = float(discount_amount)
+                order.metadata['discount_per_shop'] = {k: float(v) for k, v in discount_per_shop.items()}
             
             if shipping_method.lower() == "pickup" and 'cash' in payment_method.lower() and pickup_date:
                 order.metadata['pickup_date'] = pickup_date
@@ -28323,13 +28414,20 @@ class CheckoutOrder(viewsets.ViewSet):
             cart_item_ids = []
             checkout_items = []
 
+            # --- Create Checkout records per shop with accurate totals ---
             if is_direct_checkout:
-                unit_price = Decimal(str(direct_variant.price)) if direct_variant.price else Decimal('0')
-                checkout_total = unit_price * direct_quantity
-                
                 shop_id = str(direct_product.shop.id) if direct_product.shop else None
-                item_shipping_fee = Decimal(str(shipping_fees_breakdown.get(shop_id, 0))) if shop_id else Decimal('0')
-                item_shipping_fee = item_shipping_fee.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                
+                # Calculate total for this shop: product total + shipping fee + transaction fee share - discount share
+                product_total = subtotal
+                shipping_fee_share = Decimal(str(shipping_fees_breakdown.get(shop_id, 0))) if shop_id else Decimal('0')
+                transaction_fee_share = transaction_fee_per_shop.get(shop_id, Decimal('0'))
+                discount_share = discount_per_shop.get(shop_id, Decimal('0'))
+                
+                # Shop total = product_total + shipping_fee + transaction_fee - discount
+                shop_total = product_total + shipping_fee_share + transaction_fee_share - discount_share
+                
+                item_shipping_fee = shipping_fee_share.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
                 item_distance = shops_distances.get(shop_id, {}).get('distance_km', None) if shop_id else None
                 
                 product_image_url = None
@@ -28349,13 +28447,13 @@ class CheckoutOrder(viewsets.ViewSet):
                     cart_item=None,
                     voucher=voucher,
                     quantity=direct_quantity,
-                    total_amount=checkout_total,
+                    total_amount=shop_total,  # ← Store the complete shop total
                     status='pending',
                     remarks=remarks[:500] if remarks else None,
                     direct_product_id=direct_product.id,
                     direct_variant_id=direct_variant.id,
                     direct_product_name=direct_product.name,
-                    direct_product_price=unit_price,
+                    direct_product_price=direct_variant.price,
                     direct_product_image=variant_image_url or product_image_url,
                     direct_shop_id=direct_product.shop.id if direct_product.shop else None,
                     direct_shop_name=direct_product.shop.name if direct_product.shop else None,
@@ -28371,12 +28469,15 @@ class CheckoutOrder(viewsets.ViewSet):
                     "product_id": str(direct_product.id),
                     "variant_id": str(direct_variant.id),
                     "variant_title": direct_variant.title,
-                    "shop_id": str(direct_product.shop.id) if direct_product.shop else None,
+                    "shop_id": shop_id,
                     "shop_name": direct_product.shop.name if direct_product.shop else None,
                     "quantity": direct_quantity,
-                    "price": float(unit_price),
-                    "total_amount": float(checkout_total),
-                    "shipping_fee": float(item_shipping_fee),
+                    "price": float(direct_variant.price),
+                    "product_total": float(product_total),
+                    "shipping_fee": float(shipping_fee_share),
+                    "transaction_fee_share": float(transaction_fee_share),
+                    "discount_share": float(discount_share),
+                    "total_amount": float(shop_total),
                     "distance_km": float(item_distance) if item_distance else None,
                     "status": "pending",
                     "product_image": variant_image_url or product_image_url,
@@ -28384,42 +28485,37 @@ class CheckoutOrder(viewsets.ViewSet):
                 })
                 
             else:
-                for cart_item in cart_items:
-                    if cart_item.variant and cart_item.variant.price is not None:
-                        unit_price = Decimal(str(cart_item.variant.price))
-                    else:
-                        unit_price = Decimal(str(cart_item.product.price)) if cart_item.product and cart_item.product.price is not None else Decimal('0')
-
-                    checkout_total = unit_price * cart_item.quantity
+                for shop_id, products in shop_products.items():
+                    shop_product_total = Decimal('0')
+                    shop_shipping_fee = Decimal(str(shipping_fees_breakdown.get(shop_id, 0))) if shop_id else Decimal('0')
+                    shop_transaction_fee_share = transaction_fee_per_shop.get(shop_id, Decimal('0'))
+                    shop_discount_share = discount_per_shop.get(shop_id, Decimal('0'))
                     
-                    shop_id = str(cart_item.product.shop.id) if cart_item.product and cart_item.product.shop else None
-                    item_shipping_fee = Decimal(str(shipping_fees_breakdown.get(shop_id, 0))) if shop_id else Decimal('0')
-                    item_shipping_fee = item_shipping_fee.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                    # Calculate total product value for this shop
+                    for product_data in products:
+                        shop_product_total += product_data['line_total']
+                    
+                    # Shop total = product_total + shipping_fee + transaction_fee - discount
+                    shop_total = shop_product_total + shop_shipping_fee + shop_transaction_fee_share - shop_discount_share
+                    
+                    # Create one Checkout record per shop
+                    # Get first product for shop info
+                    first_product = products[0]
+                    first_cart_item = first_product.get('cart_item')
+                    first_product_obj = first_product['product']
+                    first_variant = first_product.get('variant')
+                    
                     item_distance = shops_distances.get(shop_id, {}).get('distance_km', None) if shop_id else None
-
-                    checkout_item = Checkout.objects.create(
-                        order=order,
-                        cart_item=cart_item,
-                        voucher=voucher,
-                        quantity=cart_item.quantity,
-                        total_amount=checkout_total,
-                        status='pending',
-                        remarks=remarks[:500] if remarks else None,
-                        shipping_fee=float(item_shipping_fee),
-                        distance_km=float(item_distance) if item_distance else None
-                    )
-
-                    cart_item_ids.append(str(cart_item.id))
                     
                     product_image_url = None
-                    if cart_item.variant and cart_item.variant.image:
+                    if first_variant and first_variant.image:
                         try:
                             from api.utils.storage_utils import convert_s3_to_public_url
-                            product_image_url = convert_s3_to_public_url(cart_item.variant.image.url)
+                            product_image_url = convert_s3_to_public_url(first_variant.image.url)
                         except Exception:
-                            product_image_url = cart_item.variant.image.url
-                    elif cart_item.product and cart_item.product.productmedia_set.exists():
-                        first_media = cart_item.product.productmedia_set.first()
+                            product_image_url = first_variant.image.url
+                    elif first_product_obj and first_product_obj.productmedia_set.exists():
+                        first_media = first_product_obj.productmedia_set.first()
                         if first_media and first_media.file_data:
                             try:
                                 from api.utils.storage_utils import convert_s3_to_public_url
@@ -28427,23 +28523,43 @@ class CheckoutOrder(viewsets.ViewSet):
                             except Exception:
                                 product_image_url = first_media.file_data.url
                     
+                    checkout_item = Checkout.objects.create(
+                        order=order,
+                        cart_item=first_cart_item,
+                        voucher=voucher,
+                        quantity=sum(p['quantity'] for p in products),
+                        total_amount=shop_total,  # ← Store the complete shop total
+                        status='pending',
+                        remarks=remarks[:500] if remarks else None,
+                        shipping_fee=float(shop_shipping_fee),
+                        distance_km=float(item_distance) if item_distance else None
+                    )
+                    
+                    cart_item_ids.extend([str(p.get('cart_item', {}).id) for p in products if p.get('cart_item')])
+                    
                     checkout_items.append({
                         "id": str(checkout_item.id),
-                        "cart_item_id": str(cart_item.id),
-                        "product_name": cart_item.product.name if cart_item.product else "Unknown",
-                        "product_id": str(cart_item.product.id) if cart_item.product else None,
-                        "variant_id": str(cart_item.variant.id) if cart_item.variant else None,
-                        "variant_title": cart_item.variant.title if cart_item.variant else None,
-                        "shop_id": str(cart_item.product.shop.id) if cart_item.product and cart_item.product.shop else None,
-                        "shop_name": cart_item.product.shop.name if cart_item.product and cart_item.product.shop else None,
-                        "quantity": cart_item.quantity,
-                        "price": float(unit_price),
-                        "total_amount": float(checkout_total),
-                        "shipping_fee": float(item_shipping_fee),
-                        "distance_km": float(item_distance) if item_distance else None,
+                        "shop_id": shop_id,
+                        "shop_name": shops_distances.get(shop_id, {}).get('shop_name', 'Unknown Shop'),
+                        "product_count": len(products),
+                        "product_total": float(shop_product_total),
+                        "shipping_fee": float(shop_shipping_fee),
+                        "transaction_fee_share": float(shop_transaction_fee_share),
+                        "discount_share": float(shop_discount_share),
+                        "total_amount": float(shop_total),
                         "status": "pending",
-                        "product_image": product_image_url,
-                        "is_refundable": cart_item.variant.is_refundable if cart_item.variant else getattr(cart_item.product, 'is_refundable', False)
+                        "shop_image": product_image_url,
+                        "products": [
+                            {
+                                "product_id": str(p['product'].id),
+                                "product_name": p['product'].name,
+                                "variant_title": p['variant'].title if p['variant'] else None,
+                                "quantity": p['quantity'],
+                                "price": float(p['price']),
+                                "line_total": float(p['line_total'])
+                            }
+                            for p in products
+                        ]
                     })
 
             Payment.objects.create(
@@ -28472,6 +28588,26 @@ class CheckoutOrder(viewsets.ViewSet):
                     breakdown_parts.append(f"{shop_name}: ₱{fee:.2f}")
                 breakdown_message = " | ".join(breakdown_parts)
 
+            # Build transaction fee breakdown message
+            transaction_fee_breakdown_message = ""
+            if number_of_shops > 1 and transaction_fee_per_shop:
+                fee_parts = []
+                for shop_id, fee in transaction_fee_per_shop.items():
+                    shop_name = shops_distances.get(shop_id, {}).get('shop_name', 'Unknown Shop')
+                    fee_parts.append(f"{shop_name}: ₱{float(fee):.2f}")
+                transaction_fee_breakdown_message = f" (Split among {number_of_shops} shops: {' | '.join(fee_parts)})"
+            
+            # Build discount breakdown message
+            discount_breakdown_message = ""
+            if number_of_shops > 1 and discount_per_shop:
+                discount_parts = []
+                for shop_id, disc in discount_per_shop.items():
+                    shop_name = shops_distances.get(shop_id, {}).get('shop_name', 'Unknown Shop')
+                    if float(disc) > 0:
+                        discount_parts.append(f"{shop_name}: ₱{float(disc):.2f}")
+                if discount_parts:
+                    discount_breakdown_message = f" Discount split: {' | '.join(discount_parts)}"
+
             response_data = {
                 "success": True,
                 "message": "Order created successfully. Waiting for seller confirmation.",
@@ -28492,13 +28628,17 @@ class CheckoutOrder(viewsets.ViewSet):
                     for shop_id, info in shops_distances.items()
                 ],
                 "discount_applied": float(discount_amount),
+                "discount_breakdown": {k: float(v) for k, v in discount_per_shop.items()},
                 "transaction_fee": float(transaction_fee),
+                "transaction_fee_breakdown": {k: float(v) for k, v in transaction_fee_per_shop.items()},
+                "number_of_shops": number_of_shops,
                 "voucher_used": voucher.code if voucher else None,
                 "status": "pending_shipment",
                 "payment_method": payment_method,
                 "shipping_method": shipping_method,
                 "pickup_date": pickup_date if shipping_method.lower() == "pickup" and 'cash' in payment_method.lower() else None,
-                "transaction_fee_note": f"Transaction fee of ₱{float(transaction_fee):.2f} (5% capped at ₱50) applied for {payment_method} payment",
+                "transaction_fee_note": f"Transaction fee of ₱{float(transaction_fee):.2f} (5% capped at ₱50) applied for {payment_method} payment{transaction_fee_breakdown_message}",
+                "discount_note": f"Discount of ₱{float(discount_amount):.2f} applied{discount_breakdown_message}" if discount_amount > 0 else None,
                 "delivery_fee_note": f"Total delivery fee of ₱{float(total_delivery_fee):.2f} (₱50 base for 3km, ₱10 per additional km, capped at ₱150 per shop). Breakdown: {breakdown_message}" if total_delivery_fee > 0 else None
             }
             
@@ -28512,7 +28652,7 @@ class CheckoutOrder(viewsets.ViewSet):
                 {"error": "Failed to create order", "details": str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-    
+        
     @action(detail=False, methods=['GET'], url_path='get_order_details/(?P<order_id>[^/.]+)')
     def get_order_details(self, request, order_id=None):
         try:
@@ -29261,6 +29401,8 @@ class CheckoutOrder(viewsets.ViewSet):
                     product.save()
 
         return stock_errors
+
+
 
 class ShippingAddressViewSet(viewsets.ViewSet):  # Renamed to avoid conflict
     @action(detail=False, methods=['GET'])
