@@ -77,7 +77,6 @@ const menuItems = [
       { title: "Team", url: "/admin/team", icon: FolderKanban, roles: ["admin"] },
       { title: "Reports", url: "/admin/reports", icon: FileText, roles: ["admin"] },
       { title: "Activity Log", url: "/admin/activity-log", icon: Activity, roles: ["admin"] },
-      { title: "Disputes", url: "/admin/dispute", icon: Flag, roles: ["admin"] },
     ]
   },
   {
