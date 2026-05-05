@@ -28215,7 +28215,12 @@ class CheckoutOrder(viewsets.ViewSet):
             shops_distances = {}
             total_delivery_fee = Decimal('0')
             
+            print(f"🔍 [CREATE ORDER] Received delivery_fees_breakdown: {delivery_fees_breakdown}")
+            print(f"🔍 [CREATE ORDER] shipping_method: {shipping_method}")
+            print(f"🔍 [CREATE ORDER] shipping_address exists: {bool(shipping_address)}")
+            
             if shipping_method.lower() == "standard delivery" and shipping_address:
+                print(f"🔍 [CREATE ORDER] Processing standard delivery")
                 if delivery_fees_breakdown and isinstance(delivery_fees_breakdown, dict):
                     for shop_id, fee in delivery_fees_breakdown.items():
                         fee_decimal = Decimal(str(fee)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
@@ -28281,6 +28286,10 @@ class CheckoutOrder(viewsets.ViewSet):
             total_amount = base_total + transaction_fee
 
             initial_status = 'pending'
+            
+            print(f"🔍 [CREATE ORDER] Final shipping_fees_breakdown: {shipping_fees_breakdown}")
+            print(f"🔍 [CREATE ORDER] Total delivery fee: {total_delivery_fee}")
+            print(f"🔍 [CREATE ORDER] Subtotal: {subtotal}, Discount: {discount_amount}, Total: {total_amount}")
             
             order = Order.objects.create(
                 user=user,
@@ -30592,9 +30601,15 @@ class PurchasesBuyer(viewsets.ViewSet):
             total_shipping_fee = 0
             shipping_fees_by_shop = {}
 
+            # Check shipping_fees_breakdown first
             if hasattr(order, 'shipping_fees_breakdown') and order.shipping_fees_breakdown:
                 shipping_fees_by_shop = order.shipping_fees_breakdown
-                total_shipping_fee = sum(shipping_fees_by_shop.values())
+                total_shipping_fee = sum(float(v) if isinstance(v, (int, float, str)) else 0 for v in shipping_fees_by_shop.values())
+            # Check metadata for delivery_fees_by_shop
+            elif order.metadata and isinstance(order.metadata, dict) and order.metadata.get('delivery_fees_by_shop'):
+                shipping_fees_by_shop = order.metadata.get('delivery_fees_by_shop', {})
+                total_shipping_fee = sum(float(v) if isinstance(v, (int, float, str)) else 0 for v in shipping_fees_by_shop.values())
+            # Fallback to order.shipping_fee
             elif hasattr(order, 'shipping_fee') and order.shipping_fee:
                 total_shipping_fee = float(order.shipping_fee)
 
@@ -30608,6 +30623,9 @@ class PurchasesBuyer(viewsets.ViewSet):
                 'transaction_fee': str(float(order.transaction_fee) if order.transaction_fee else 0.00),
                 'payment_fee': str(float(order.transaction_fee) if order.transaction_fee else 0.00),
             }
+            
+            print(f"🔍 Shipping fees breakdown: {shipping_fees_by_shop}")
+            print(f"📦 Order summary: {order_summary}")
             
             response_data = {
                 'order': {

@@ -88,6 +88,7 @@ interface DeliveryAddress {
 interface OrderSummary {
   subtotal: string;
   shipping_fee: string;
+  shipping_fees_breakdown?: Record<string, number | string>;
   tax: string;
   discount: string;
   total: string;
@@ -256,6 +257,7 @@ export default function ViewTrackOrderPage() {
   const [reviewedMap, setReviewedMap] = useState<Record<string, boolean>>({});
   const _lastReviewedFetchKey = useRef<string | null>(null);
   const [cancellingItems, setCancellingItems] = useState(false);
+  const [refundCountdown, setRefundCountdown] = useState<string | null>(null);
 
   // Check if we're filtering by a specific shop
   const isFilteringByShop = !!filterShopId;
@@ -376,12 +378,16 @@ export default function ViewTrackOrderPage() {
         data.order_summary = {
           subtotal: subtotalStr,
           shipping_fee: rawSummary.shipping_fee ?? shippingFeeStr,
+          shipping_fees_breakdown: rawSummary.shipping_fees_breakdown,
           tax: taxStr,
           discount: discountStr,
           total: totalStr,
           transaction_fee: rawSummary.transaction_fee ?? "0",
           payment_fee: rawSummary.payment_fee ?? "0",
         };
+
+        console.log("📦 Order Summary:", data.order_summary);
+        console.log("🏪 Shipping Fees Breakdown:", data.order_summary.shipping_fees_breakdown);
 
         data.summary_counts = data.summary_counts || {
           total_items: data.items.length || 0,
@@ -435,6 +441,9 @@ export default function ViewTrackOrderPage() {
             data.order.status.slice(1).replace(/_/g, " ");
         }
 
+        console.log("🔍 [BEFORE SETORDERDATA] Full order_summary:", JSON.stringify(data.order_summary, null, 2));
+        console.log("🔍 [BEFORE SETORDERDATA] shipping_fees_breakdown:", data.order_summary?.shipping_fees_breakdown);
+        
         setOrderData(data);
         if (data.proof_images && data.proof_images.length > 0) {
           setProofs(data.proof_images);
@@ -1602,6 +1611,45 @@ export default function ViewTrackOrderPage() {
     );
   };
 
+  // Calculate refund countdown timer
+  const calculateRefundCountdown = () => {
+    if (!orderData?.order?.refund_expire_date) {
+      setRefundCountdown(null);
+      return;
+    }
+
+    const expireDate = new Date(orderData.order.refund_expire_date);
+    const now = new Date();
+    const timeDiff = expireDate.getTime() - now.getTime();
+
+    if (timeDiff <= 0) {
+      setRefundCountdown("Expired");
+      return;
+    }
+
+    const days = Math.floor(timeDiff / (1000 * 60 * 60 * 24));
+    const hours = Math.floor((timeDiff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+    const minutes = Math.floor((timeDiff % (1000 * 60 * 60)) / (1000 * 60));
+    const seconds = Math.floor((timeDiff % (1000 * 60)) / 1000);
+
+    if (days > 0) {
+      setRefundCountdown(`${days}d ${hours}h ${minutes}m`);
+    } else if (hours > 0) {
+      setRefundCountdown(`${hours}h ${minutes}m ${seconds}s`);
+    } else if (minutes > 0) {
+      setRefundCountdown(`${minutes}m ${seconds}s`);
+    } else {
+      setRefundCountdown(`${seconds}s`);
+    }
+  };
+
+  // Update countdown every second
+  useEffect(() => {
+    calculateRefundCountdown();
+    const timer = setInterval(calculateRefundCountdown, 1000);
+    return () => clearInterval(timer);
+  }, [orderData?.order?.refund_expire_date]);
+
   const handleReviewProduct = (productId: string) => {
     router.push(
       `/customer/order-review?productId=${productId}&orderId=${orderId}`,
@@ -1613,7 +1661,7 @@ export default function ViewTrackOrderPage() {
   };
 
   // Handle individual item return/refund
-  const handleReturnItem = (checkoutId: string, productName: string) => {
+  const handleReturnItem = (checkoutId: string, productName: string, shopId: string) => {
     Alert.alert(
       "Request Return/Refund",
       `Do you want to request a return or refund for "${productName}"?`,
@@ -1623,7 +1671,7 @@ export default function ViewTrackOrderPage() {
           text: "Continue",
           onPress: () => {
             router.push(
-              `/customer/request-refund?orderId=${orderId}&checkoutId=${checkoutId}`,
+              `/customer/request-refund?orderId=${orderId}&checkoutId=${checkoutId}&shopId=${shopId}`,
             );
           },
         },
@@ -1739,6 +1787,15 @@ export default function ViewTrackOrderPage() {
     timeline,
     actions,
   } = orderData;
+
+  // Debug: Log shipping breakdown and shop IDs
+  console.log("🔍 [RENDER] order_summary.shipping_fees_breakdown:", order_summary?.shipping_fees_breakdown);
+  console.log("🔍 [RENDER] Items shop IDs:", items?.map(item => ({ 
+    checkout_id: item.checkout_id, 
+    shop_id: item.shop_info?.id,
+    shop_name: item.shop_info?.name
+  })));
+  console.log("🔍 [RENDER] Breakdown shop IDs:", order_summary?.shipping_fees_breakdown ? Object.keys(order_summary.shipping_fees_breakdown) : "none");
 
   const orderStatusLower = String(order?.status || "").toLowerCase();
 
@@ -2486,26 +2543,7 @@ export default function ViewTrackOrderPage() {
 
                     {/* Action Buttons - only show when shop_status is delivered or completed */}
                    {/* Return/Refund Button - only */}
-{item.can_return && item.is_refundable && (
-  <TouchableOpacity
-    style={styles.returnItemButton}
-    onPress={() =>
-      handleReturnItem(
-        item.checkout_id,
-        item.product_name,
-      )
-    }
-  >
-    <MaterialIcons
-      name="receipt"
-      size={14}
-      color="#EF4444"
-    />
-    <Text style={styles.returnItemButtonText}>
-      Request Return/Refund
-    </Text>
-  </TouchableOpacity>
-)}
+
                   </View>
                   <View style={styles.groupItemPriceContainer}>
                     <Text
@@ -2717,6 +2755,7 @@ export default function ViewTrackOrderPage() {
                                     handleReturnItem(
                                       item.checkout_id,
                                       item.product_name,
+                                      item.shop_info?.id || ''
                                     )
                                   }
                                 >
@@ -2839,6 +2878,31 @@ export default function ViewTrackOrderPage() {
           {formatCurrency(order_summary.shipping_fee)}
         </Text>
       </View>
+      
+      {/* Show shipping fee breakdown by shop if available */}
+      {order_summary.shipping_fees_breakdown && 
+       typeof order_summary.shipping_fees_breakdown === 'object' &&
+       Object.keys(order_summary.shipping_fees_breakdown).length > 0 && (
+        <>
+          {console.log("✅ [RENDER] Shipping breakdown condition passed! Keys:", Object.keys(order_summary.shipping_fees_breakdown))}
+          <View style={styles.shippingBreakdownContainer}>
+            <Text style={styles.breakdownTitle}>Breakdown by Shop:</Text>
+            {Object.entries(order_summary.shipping_fees_breakdown).map(([shopId, fee], index) => {
+              // Try to find the shop name from the items
+              const shopName = orderData?.items.find(item => 
+                (item.shop_info?.id === shopId || item.shop_info?.id?.toString() === shopId?.toString())
+              )?.shop_info?.name || `Shop ${shopId}`;
+              
+              return (
+                <View key={`${shopId}-${index}`} style={styles.breakdownRow}>
+                  <Text style={styles.breakdownLabel}>{shopName}:</Text>
+                  <Text style={styles.breakdownValue}>{formatCurrency(fee.toString())}</Text>
+                </View>
+              );
+            })}
+          </View>
+        </>
+      )}
       {parseFloat(order_summary.tax || "0") > 0 && (
         <View style={styles.summaryRow}>
           <Text style={styles.summaryLabel}>Value Added Tax (VAT):</Text>
@@ -2988,7 +3052,12 @@ export default function ViewTrackOrderPage() {
                 router.push(`/customer/request-refund?orderId=${order.id}&shopId=${filterShopId}`);
               }}
             >
-              <Text style={styles.requestRefundButtonText}>Request Refund</Text>
+              <Text style={styles.requestRefundButtonText}>
+                Request Refund
+                {refundCountdown && (
+                  <Text style={styles.countdownText}>{"\n"}({refundCountdown})</Text>
+                )}
+              </Text>
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -3050,12 +3119,12 @@ export default function ViewTrackOrderPage() {
                         styles.requestRefundButtonTextDisabled,
                     ]}
                   >
-                    Request Refund{" "}
-                    {isPickupMethod
-                      ? "(Not Available)"
-                      : isRefundExpired
-                        ? "(Expired)"
-                        : ""}
+                    Request Refund
+                    {refundCountdown && !isPickupMethod && (
+                      <Text style={styles.countdownText}>{"\n"}({refundCountdown})</Text>
+                    )}
+                    {isPickupMethod && " (Not Available)"}
+                    {isRefundExpired && " (Expired)"}
                   </Text>
                 </TouchableOpacity>
               )}
@@ -3597,6 +3666,45 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: "#111827",
   },
+  shippingBreakdownContainer: {
+    marginTop: 12,
+    marginBottom: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: "#F9FAFB",
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+  },
+  breakdownTitle: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#6B7280",
+    marginBottom: 8,
+  },
+  breakdownRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 4,
+    marginBottom: 6,
+    borderWidth: 0.5,
+    borderColor: "#E5E7EB",
+  },
+  breakdownLabel: {
+    fontSize: 12,
+    color: "#374151",
+    fontWeight: "500",
+    flex: 1,
+  },
+  breakdownValue: {
+    fontSize: 12,
+    color: "#111827",
+    fontWeight: "600",
+    textAlign: "right",
+  },
 
   infoRow: {
     flexDirection: "row",
@@ -3762,6 +3870,12 @@ const styles = StyleSheet.create({
     color: "#F97316",
     fontSize: 14,
     fontWeight: "600",
+  },
+  countdownText: {
+    fontSize: 12,
+    fontWeight: "500",
+    color: "#F97316",
+    opacity: 0.85,
   },
 
   proofGrid: {

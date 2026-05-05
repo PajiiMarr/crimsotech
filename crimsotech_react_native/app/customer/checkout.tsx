@@ -704,6 +704,8 @@ export default function CheckoutPage() {
     try {
       const requestBody = buildOrderRequestBody(checkoutData.checkout_items);
       console.log("🔍 [PLACE ORDER] Full request body:", JSON.stringify(requestBody, null, 2));
+      console.log("🔍 [PLACE ORDER] delivery_fees_breakdown specifically:", JSON.stringify(requestBody.delivery_fees_breakdown));
+      console.log("🔍 [PLACE ORDER] shipping_method:", requestBody.shipping_method);
       
       const response = await AxiosInstance.post(
         "/checkout-order/create_order/",

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   SafeAreaView,
   View,
@@ -235,10 +235,12 @@ const ProgressBar = ({ progress }: any) => (
 
 export default function RequestRefundPage() {
   const { userRole, userId } = useAuth();
-  const { orderId, productId } = useLocalSearchParams();
+  const { orderId, productId, shopId, checkoutId } = useLocalSearchParams();
   const router = useRouter();
   const decodedOrderId = orderId ? decodeURIComponent(String(orderId)) : null;
   const decodedProductId = productId ? decodeURIComponent(String(productId)) : null;
+  const decodedShopId = shopId ? decodeURIComponent(String(shopId)) : null;
+  const decodedCheckoutId = checkoutId ? decodeURIComponent(String(checkoutId)) : null;
 
   const [order, setOrder] = useState<PurchaseOrder | null>(null);
   const [loading, setLoading] = useState(true);
@@ -246,7 +248,9 @@ export default function RequestRefundPage() {
   const [error, setError] = useState<string | null>(null);
 
   // Selection states
-  const [selectedItems, setSelectedItems] = useState<string[]>(decodedProductId ? [decodedProductId] : []);
+  const [selectedItems, setSelectedItems] = useState<string[]>([]);
+// Add a ref to track if we've already filtered by product ID
+const hasFilteredByProduct = useRef(false);
   const [refundQuantities, setRefundQuantities] = useState<Record<string, number>>({});
   const [selectedRefundType, setSelectedRefundType] = useState<RefundType | null>(null);
   const [selectedRefundMethod, setSelectedRefundMethod] = useState<RefundMethod | null>(null);
@@ -293,6 +297,38 @@ export default function RequestRefundPage() {
   const [showWalletSelectionModal, setShowWalletSelectionModal] = useState(false);
   const [showBankSelectionModal, setShowBankSelectionModal] = useState(false);
 
+  // Compute filtered items based on shop_id if provided
+  const filteredItems = order?.items.filter(item => {
+    // If shopId is provided, only show items from that shop
+    if (decodedShopId) {
+      // Check both shop_id and shop_info.id fields
+      return item.shop_id === decodedShopId || item.shop_info?.id === decodedShopId;
+    }
+    // Otherwise show all items
+    return true;
+  }) || [];
+
+  // Filter by product_id when order loads and we have a decodedProductId
+useEffect(() => {
+  if (!order || hasFilteredByProduct.current) return;
+  
+  // If we have a checkoutId, pre-select it (from clicking specific item button)
+  if (decodedCheckoutId) {
+    const itemToSelect = order.items.find(item => item.checkout_id === decodedCheckoutId);
+    if (itemToSelect && !refundedCheckoutIds.has(itemToSelect.checkout_id)) {
+      setSelectedItems([itemToSelect.checkout_id]);
+      hasFilteredByProduct.current = true;
+    }
+  }
+  // Otherwise filter by productId if provided
+  else if (decodedProductId) {
+    const itemToSelect = order.items.find(item => item.product_id === decodedProductId);
+    if (itemToSelect && !refundedCheckoutIds.has(itemToSelect.checkout_id)) {
+      setSelectedItems([itemToSelect.checkout_id]);
+      hasFilteredByProduct.current = true;
+    }
+  }
+}, [order, decodedProductId, decodedCheckoutId, refundedCheckoutIds]);
   // Fetch order data
   useEffect(() => {
     fetchOrderData();
@@ -546,18 +582,73 @@ export default function RequestRefundPage() {
 
   const handleItemSelect = (checkoutId: string) => {
     if (refundedCheckoutIds.has(checkoutId)) return; // already refunded
-    setSelectedItems(prev =>
-      prev.includes(checkoutId) ? prev.filter(id => id !== checkoutId) : [...prev, checkoutId]
-    );
+    
+    const itemToSelect = order?.items.find(i => i.checkout_id === checkoutId);
+    if (!itemToSelect) return;
+    
+    // If already selected, just remove it
+    if (selectedItems.includes(checkoutId)) {
+      setSelectedItems(prev => prev.filter(id => id !== checkoutId));
+      return;
+    }
+    
+    // If there are already selected items, check if new item is from same shop
+    if (selectedItems.length > 0) {
+      const firstSelectedItem = order?.items.find(i => i.checkout_id === selectedItems[0]);
+      const firstShopId = firstSelectedItem?.shop_id || firstSelectedItem?.shop_info?.id;
+      const newShopId = itemToSelect?.shop_id || itemToSelect?.shop_info?.id;
+      
+      if (firstSelectedItem && firstShopId !== newShopId) {
+        Alert.alert(
+          'Cannot Select Item',
+          'You can only request a refund for items from the same shop. Please submit separate refund requests for each shop.',
+          [{ text: 'OK' }]
+        );
+        return;
+      }
+    }
+    
+    setSelectedItems(prev => [...prev, checkoutId]);
   };
 
   const handleSelectAll = () => {
     if (!order) return;
-    const selectableItems = order.items.filter(item => !refundedCheckoutIds.has(item.checkout_id));
-    if (selectedItems.length === selectableItems.length) {
-      setSelectedItems([]);
-    } else {
-      setSelectedItems(selectableItems.map(item => item.checkout_id));
+    
+    // If we're filtering by shop, only work with filtered items
+    const itemsToUse = decodedShopId ? filteredItems : order.items;
+    
+    // If no items selected, select all items from the first available shop
+    if (selectedItems.length === 0) {
+      const firstSelectableItem = itemsToUse.find(item => !refundedCheckoutIds.has(item.checkout_id));
+      const shopId = firstSelectableItem?.shop_id || firstSelectableItem?.shop_info?.id;
+      if (firstSelectableItem && shopId) {
+        const sameShopItems = itemsToUse.filter(item => 
+          !refundedCheckoutIds.has(item.checkout_id) && 
+          (item.shop_id === shopId || item.shop_info?.id === shopId)
+        );
+        setSelectedItems(sameShopItems.map(item => item.checkout_id));
+      } else {
+        const selectableItems = itemsToUse.filter(item => !refundedCheckoutIds.has(item.checkout_id));
+        setSelectedItems(selectableItems.map(item => item.checkout_id));
+      }
+      return;
+    }
+    
+    // If items are selected, get the shop_id of the first selected item
+    const firstSelectedItem = itemsToUse.find(i => i.checkout_id === selectedItems[0]);
+    const firstSelectedShop = firstSelectedItem?.shop_id || firstSelectedItem?.shop_info?.id;
+    
+    if (firstSelectedShop) {
+      const selectableItems = itemsToUse.filter(item => 
+        !refundedCheckoutIds.has(item.checkout_id) && 
+        (item.shop_id === firstSelectedShop || item.shop_info?.id === firstSelectedShop)
+      );
+      
+      if (selectedItems.length === selectableItems.length) {
+        setSelectedItems([]);
+      } else {
+        setSelectedItems(selectableItems.map(item => item.checkout_id));
+      }
     }
   };
 
@@ -674,6 +765,8 @@ export default function RequestRefundPage() {
   };
 
   const validateForm = () => {
+    if (selectedItems.length === 0) return 'Please select at least one item';
+
     if (selectedItems.length === 0) return 'Please select at least one item';
 
     const uniqueShops = new Set();
@@ -1327,13 +1420,23 @@ export default function RequestRefundPage() {
             </View>
             <TouchableOpacity onPress={handleSelectAll}>
               <Text style={styles.selectAllText}>
-                {selectedItems.length === order.items.filter(i => !refundedCheckoutIds.has(i.checkout_id)).length ? 'Deselect All' : 'Select All'}
+                {selectedItems.length === filteredItems.filter(i => !refundedCheckoutIds.has(i.checkout_id)).length ? 'Deselect All' : 'Select All'}
               </Text>
             </TouchableOpacity>
           </View>
           
+          {/* Show info if filtering by shop */}
+          {decodedShopId && filteredItems.length > 0 && (
+            <View style={styles.shopFilterInfo}>
+              <Icon name="information-outline" size={16} color="#0ea5e9" />
+              <Text style={styles.shopFilterInfoText}>
+                Showing items from <Text style={{ fontWeight: '600' }}>{filteredItems[0]?.shop_name || 'this shop'}</Text>
+              </Text>
+            </View>
+          )}
+          
           <View style={styles.itemsList}>
-            {order.items.map(renderOrderItem)}
+            {filteredItems.map(renderOrderItem)}
           </View>
           {selectedItems.length > 0 && (() => {
             const uniqueShops = [...new Set(selectedItemsDetails.map(item => item.shop_id))];
@@ -2081,6 +2184,23 @@ const styles = StyleSheet.create({
   shopInfoBold: {
     fontWeight: '600',
     color: '#4f46e5',
+  },
+  shopFilterInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#e0f2fe',
+    borderWidth: 1,
+    borderColor: '#0ea5e9',
+    borderRadius: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    marginBottom: 12,
+    gap: 8,
+  },
+  shopFilterInfoText: {
+    fontSize: 12,
+    color: '#0c4a6e',
+    fontWeight: '500',
   },
 });
 
