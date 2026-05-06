@@ -1382,39 +1382,7 @@ export default function ProfileScreen() {
           ══════════════════════════════════════════ */}
           {activeTab === "finance" && (
   <View style={styles.tabContent}>
-    {/* ── Filter chips ── */}
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      style={styles.filterScroll}
-    >
-      {[
-        { key: "all", label: "All" },
-        { key: "personal", label: "Personal Listings" },
-        ...shopFilters.map((s) => ({
-          key: `shop_${s.id}`,
-          label: s.name,
-        })),
-      ].map((f) => (
-        <TouchableOpacity
-          key={f.key}
-          style={[
-            styles.filterChip,
-            selectedFilter === f.key && styles.filterChipActive,
-          ]}
-          onPress={() => setSelectedFilter(f.key)}
-        >
-          <Text
-            style={[
-              styles.filterChipText,
-              selectedFilter === f.key && styles.filterChipTextActive,
-            ]}
-          >
-            {f.label}
-          </Text>
-        </TouchableOpacity>
-      ))}
-    </ScrollView>
+    {/* ── Filter chips ── REMOVED ── */}
 
     {/* ── Balance cards with shadow and border ── */}
     <View style={[styles.balanceGrid, { marginBottom: 10 }]}>
@@ -1436,7 +1404,7 @@ export default function ProfileScreen() {
         ? formatCurrency(wallet?.pending_balance || 0)
         : "••••••"}
     </Text>
-    <Text style={styles.balanceCardSub}>Awaiting release (3-day hold)</Text>
+    <Text style={styles.balanceCardSub}>Awaiting release</Text>
   </View>
 
       {/* Available - NOW SECOND */}

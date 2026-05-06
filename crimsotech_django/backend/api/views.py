@@ -52395,10 +52395,13 @@ class UserWalletViewSet(viewsets.ModelViewSet):
     # ================================================================
     def _release_expired_pending_transactions(self, user_wallet):
         """
-        Release pending transactions where order.refund_expire_date has passed.
+        Release pending transactions when:
+        1. order.refund_expire_date has passed, OR
+        2. OrderShopStatus.status = 'completed' AND OrderShopStatus.refund_status = 'expired'
         Called before withdrawal request to check available balance.
         """
         from datetime import datetime, date
+        from api.models import OrderShopStatus
         
         today = timezone.now()
         released_amount = Decimal('0')
@@ -52414,22 +52417,38 @@ class UserWalletViewSet(viewsets.ModelViewSet):
         for pending_tx in expired_pending:
             should_release = False
             
-            # Check if there's an associated order with refund_expire_date
-            if pending_tx.order and pending_tx.order.refund_expire_date:
-                # Release if refund_expire_date has passed
-                if today > pending_tx.order.refund_expire_date:
-                    should_release = True
-            elif pending_tx.order and pending_tx.order.completed_at:
-                # FIX: Handle date vs datetime properly
-                completed_at = pending_tx.order.completed_at
-                if isinstance(completed_at, date) and not isinstance(completed_at, datetime):
-                    # Convert date to datetime at end of day
-                    completed_at = datetime.combine(completed_at, datetime.max.time())
-                    completed_at = timezone.make_aware(completed_at) if timezone.is_naive(completed_at) else completed_at
+            # Check if there's an associated order
+            if pending_tx.order:
+                # Check if there's a matching OrderShopStatus with completed + expired refund
+                if pending_tx.shop:
+                    shop_status = OrderShopStatus.objects.filter(
+                        order=pending_tx.order,
+                        shop=pending_tx.shop,
+                        status='completed',
+                        refund_status='expired'
+                    ).first()
+                    
+                    if shop_status:
+                        should_release = True
                 
-                # Release if completed_at is older than 1 day
-                if (today - completed_at).days >= 1:
-                    should_release = True
+                # Fallback: Check if there's an associated order with refund_expire_date
+                if not should_release and pending_tx.order.refund_expire_date:
+                    # Release if refund_expire_date has passed
+                    if today > pending_tx.order.refund_expire_date:
+                        should_release = True
+                
+                # Fallback: Check completed_at timestamp (1 day hold)
+                if not should_release and pending_tx.order.completed_at:
+                    # FIX: Handle date vs datetime properly
+                    completed_at = pending_tx.order.completed_at
+                    if isinstance(completed_at, date) and not isinstance(completed_at, datetime):
+                        # Convert date to datetime at end of day
+                        completed_at = datetime.combine(completed_at, datetime.max.time())
+                        completed_at = timezone.make_aware(completed_at) if timezone.is_naive(completed_at) else completed_at
+                    
+                    # Release if completed_at is older than 1 day
+                    if (today - completed_at).days >= 1:
+                        should_release = True
             else:
                 # No order reference, don't release automatically
                 continue
@@ -52449,7 +52468,7 @@ class UserWalletViewSet(viewsets.ModelViewSet):
                     user_wallet.available_balance += pending_tx.amount
                     released_amount += pending_tx.amount
                     
-                    logger.info(f"Released pending transaction {pending_tx.transaction_id} after refund_expire_date passed")
+                    logger.info(f"Released pending transaction {pending_tx.transaction_id} - OrderShopStatus completed with expired refund")
         
         if released_amount > 0:
             user_wallet.save()
