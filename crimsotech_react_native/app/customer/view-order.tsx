@@ -275,7 +275,7 @@ export default function ViewTrackOrderPage() {
   const _lastReviewedFetchKey = useRef<string | null>(null);
   const [cancellingItems, setCancellingItems] = useState(false);
   const [refundCountdown, setRefundCountdown] = useState<string | null>(null);
-  const isCompletingOrder = useRef(false); 
+  const isCompletingOrder = useRef(false);
   const getReviewedMapKey = (productId: string) =>
     `${orderId || "unknown-order"}:${productId}`;
 
@@ -428,11 +428,13 @@ export default function ViewTrackOrderPage() {
         ) {
           const shopStatus = data.order.shop_statuses[filterShopId as string];
           // Handle both old string format and new object format
-          const status = typeof shopStatus === 'string' ? shopStatus : (shopStatus as any).status;
+          const status =
+            typeof shopStatus === "string"
+              ? shopStatus
+              : (shopStatus as any).status;
           data.order.status = status;
           data.order.status_display =
-            status.charAt(0).toUpperCase() +
-            status.slice(1).replace(/_/g, " ");
+            status.charAt(0).toUpperCase() + status.slice(1).replace(/_/g, " ");
         }
 
         setOrderData(data);
@@ -903,29 +905,33 @@ export default function ViewTrackOrderPage() {
 
   const handleOrderReceived = async () => {
     if (!orderId || !user?.id) return;
-    
+
     // Prevent multiple clicks
     if (isCompletingOrder.current) return;
     isCompletingOrder.current = true;
-  
+
     const isShopSpecific = isFilteringByShop && filterShopId;
     const shopId = isShopSpecific ? filterShopId : null;
-  
+
     Alert.alert(
       "Confirm Order Received",
       isShopSpecific
         ? `Have you received this order from ${filterShopName}? This will mark it as completed.`
         : "Have you received your order? This will mark the order as completed.",
       [
-        { text: "No", style: "cancel", onPress: () => {
-          isCompletingOrder.current = false;
-        } },
+        {
+          text: "No",
+          style: "cancel",
+          onPress: () => {
+            isCompletingOrder.current = false;
+          },
+        },
         {
           text: "Yes",
           onPress: async () => {
             try {
               let response;
-  
+
               if (isShopSpecific && shopId) {
                 const shopCheckout = orderData?.items.find(
                   (item) => item.shop_info?.id === shopId,
@@ -935,7 +941,7 @@ export default function ViewTrackOrderPage() {
                   isCompletingOrder.current = false;
                   return;
                 }
-  
+
                 response = await AxiosInstance.post(
                   `/purchases-buyer/${orderId}/complete-shop-item/`,
                   {
@@ -951,7 +957,7 @@ export default function ViewTrackOrderPage() {
                   { headers: { "X-User-Id": user.id } },
                 );
               }
-  
+
               if (response.data.success) {
                 setCenterToastMessage(
                   isShopSpecific
@@ -959,10 +965,10 @@ export default function ViewTrackOrderPage() {
                     : "Order marked as completed successfully",
                 );
                 setCenterToastVisible(true);
-                
+
                 // Refresh data
                 await fetchOrderData();
-                
+
                 // Hide toast after 2 seconds
                 setTimeout(() => {
                   setCenterToastVisible(false);
@@ -1621,9 +1627,13 @@ export default function ViewTrackOrderPage() {
     // If filtering by shop, look for refund_expire_date in shop statuses
     if (isFilteringByShop && filterShopId) {
       const shopStatuses = orderData?.order?.shop_statuses;
-      if (shopStatuses && typeof shopStatuses === 'object') {
+      if (shopStatuses && typeof shopStatuses === "object") {
         const shopStatus = (shopStatuses as any)[filterShopId as string];
-        if (shopStatus && typeof shopStatus === 'object' && shopStatus.refund_expire_date) {
+        if (
+          shopStatus &&
+          typeof shopStatus === "object" &&
+          shopStatus.refund_expire_date
+        ) {
           refundExpireDate = shopStatus.refund_expire_date;
         }
       }
@@ -1675,7 +1685,11 @@ export default function ViewTrackOrderPage() {
     calculateRefundCountdown();
     const timer = setInterval(calculateRefundCountdown, 1000);
     return () => clearInterval(timer);
-  }, [orderData?.order?.refund_expire_date, orderData?.order?.shop_statuses, filterShopId]);
+  }, [
+    orderData?.order?.refund_expire_date,
+    orderData?.order?.shop_statuses,
+    filterShopId,
+  ]);
 
   const handleReturnItem = (
     checkoutId: string,
@@ -2023,12 +2037,15 @@ export default function ViewTrackOrderPage() {
                       size={18}
                       color={order.status_color}
                     />
-                    <Text style={[styles.statusText, { color: order.status_color }]}>
+                    <Text
+                      style={[styles.statusText, { color: order.status_color }]}
+                    >
                       {getStatusText(order)}
                     </Text>
                   </View>
                   <Text style={styles.subStatusText}>
-                    Awaiting confirmation from the seller. We will notify you once processing starts.
+                    Awaiting confirmation from the seller. We will notify you
+                    once processing starts.
                   </Text>
                 </View>
               </View>
@@ -2675,11 +2692,17 @@ export default function ViewTrackOrderPage() {
                                   />
                                   <Text style={styles.returnItemButtonText}>
                                     Request Refund
-                                    {refundCountdown && refundCountdown !== "Expired" && (
-                                      <Text style={{fontSize: 10, color: '#EF4444'}}>
-                                        {"\n"}({refundCountdown})
-                                      </Text>
-                                    )}
+                                    {refundCountdown &&
+                                      refundCountdown !== "Expired" && (
+                                        <Text
+                                          style={{
+                                            fontSize: 10,
+                                            color: "#EF4444",
+                                          }}
+                                        >
+                                          {"\n"}({refundCountdown})
+                                        </Text>
+                                      )}
                                   </Text>
                                 </TouchableOpacity>
                               )}
@@ -2793,8 +2816,17 @@ export default function ViewTrackOrderPage() {
                 const shopTransactionFee = transactionFeePerShop[shopId]
                   ? parseFloat(String(transactionFeePerShop[shopId]))
                   : 0;
+
+                // Get discount from order_summary.discount (global discount)
+                const discountAmount = parseFloat(
+                  order_summary.discount || "0",
+                );
+
                 const shopTotal =
-                  totalItemPrice + shopShippingFee + shopTransactionFee;
+                  totalItemPrice +
+                  shopShippingFee +
+                  shopTransactionFee -
+                  discountAmount;
 
                 return (
                   <>
@@ -2841,6 +2873,17 @@ export default function ViewTrackOrderPage() {
                       </View>
                     )}
 
+                    {discountAmount > 0 && (
+                      <View style={styles.summaryRow}>
+                        <Text style={styles.summaryLabel}>Discount:</Text>
+                        <Text
+                          style={[styles.summaryValue, styles.discountText]}
+                        >
+                          -{formatCurrency(discountAmount)}
+                        </Text>
+                      </View>
+                    )}
+
                     <View style={[styles.summaryRow, styles.totalRow]}>
                       <Text style={styles.totalLabel}>Total for this shop</Text>
                       <Text style={styles.totalValue}>
@@ -2852,7 +2895,6 @@ export default function ViewTrackOrderPage() {
               })()
             : // Global order summary
               (() => {
-                // Calculate total item price (price × quantity for all items)
                 const totalItemPrice = items.reduce(
                   (sum, item) =>
                     sum + parseFloat(item.price || "0") * item.quantity,
@@ -2910,7 +2952,6 @@ export default function ViewTrackOrderPage() {
                         </View>
                       )}
 
-                    {/* VAT - Global (from order_summary.tax) */}
                     {parseFloat(order_summary.tax || "0") > 0 && (
                       <View style={styles.summaryRow}>
                         <Text style={styles.summaryLabel}>
@@ -2922,7 +2963,6 @@ export default function ViewTrackOrderPage() {
                       </View>
                     )}
 
-                    {/* Transaction Fee - Global */}
                     {parseFloat(order_summary.transaction_fee || "0") > 0 && (
                       <>
                         <View style={styles.summaryRow}>
@@ -2936,7 +2976,6 @@ export default function ViewTrackOrderPage() {
                           </Text>
                         </View>
 
-                        {/* Transaction Fee per shop breakdown */}
                         {transactionFeePerShop &&
                           Object.keys(transactionFeePerShop).length > 0 && (
                             <View style={styles.shippingBreakdownContainer}>
@@ -3030,18 +3069,19 @@ export default function ViewTrackOrderPage() {
           </View>
         </View>
       </ScrollView>
-      
+
       {/* Sticky Action Buttons */}
       {(() => {
-        
-        const shopStatusData = isFilteringByShop && filterShopId
-          ? orderData?.order?.shop_statuses?.[filterShopId as string]
-          : null;
-        
+        const shopStatusData =
+          isFilteringByShop && filterShopId
+            ? orderData?.order?.shop_statuses?.[filterShopId as string]
+            : null;
+
         // Handle both old string format and new object format
-        const currentShopStatus = typeof shopStatusData === 'string' 
-          ? shopStatusData 
-          : (shopStatusData as any)?.status || null;
+        const currentShopStatus =
+          typeof shopStatusData === "string"
+            ? shopStatusData
+            : (shopStatusData as any)?.status || null;
 
         const showOrderReceivedForShop =
           isFilteringByShop &&
@@ -3049,8 +3089,7 @@ export default function ViewTrackOrderPage() {
             currentShopStatus === "picked_up");
 
         const showCompletedActionsForShop =
-          isFilteringByShop &&
-          currentShopStatus === "completed";
+          isFilteringByShop && currentShopStatus === "completed";
 
         const showOrderReceivedForOrder =
           !isFilteringByShop &&
@@ -3058,19 +3097,19 @@ export default function ViewTrackOrderPage() {
             orderStatusLower === "picked_up" ||
             orderStatusLower === "partially_delivered");
 
-            const showCancelForOrder = !isFilteringByShop && actions.can_cancel;
-            const showCancelPendingOrder = orderStatusLower === "pending";
-        
-            // DEBUG LOGS
-            console.log("=== CANCEL BUTTON DEBUG ===");
-            console.log("orderStatusLower:", orderStatusLower);
-            console.log("actions.can_cancel:", actions.can_cancel);
-            console.log("isFilteringByShop:", isFilteringByShop);
-            console.log("showCancelForOrder:", showCancelForOrder);
-            console.log("showCancelPendingOrder:", showCancelPendingOrder);
-            console.log("order?.status:", order?.status);
-            console.log("currentItems count:", currentItems.length);
-            console.log("===========================");
+        const showCancelForOrder = !isFilteringByShop && actions.can_cancel;
+        const showCancelPendingOrder = orderStatusLower === "pending";
+
+        // DEBUG LOGS
+        console.log("=== CANCEL BUTTON DEBUG ===");
+        console.log("orderStatusLower:", orderStatusLower);
+        console.log("actions.can_cancel:", actions.can_cancel);
+        console.log("isFilteringByShop:", isFilteringByShop);
+        console.log("showCancelForOrder:", showCancelForOrder);
+        console.log("showCancelPendingOrder:", showCancelPendingOrder);
+        console.log("order?.status:", order?.status);
+        console.log("currentItems count:", currentItems.length);
+        console.log("===========================");
 
         const hasPendingItems = currentItems.some(
           (item) => item.shop_status === "pending",
@@ -3083,22 +3122,22 @@ export default function ViewTrackOrderPage() {
           orderStatusLower === "completed" &&
           (actions.can_review || actions.can_return);
 
-          if (
-            !showCancelForOrder &&
-            !showCancelPendingOrder &&
-            !showCancelPendingItems &&
-            !showOrderReceivedForOrder &&
-            !showRefundRateForOrder &&
-            !showOrderReceivedForShop &&
-            !showCompletedActionsForShop
-          ) {
-            console.log("⚠️ FOOTER NOT RENDERING - All show flags are false");
-            return null;
-          }
+        if (
+          !showCancelForOrder &&
+          !showCancelPendingOrder &&
+          !showCancelPendingItems &&
+          !showOrderReceivedForOrder &&
+          !showRefundRateForOrder &&
+          !showOrderReceivedForShop &&
+          !showCompletedActionsForShop
+        ) {
+          console.log("⚠️ FOOTER NOT RENDERING - All show flags are false");
+          return null;
+        }
 
-          console.log("✅ FOOTER WILL RENDER");
-          console.log("showCancelForOrder:", showCancelForOrder);
-          console.log("showCancelPendingOrder:", showCancelPendingOrder);
+        console.log("✅ FOOTER WILL RENDER");
+        console.log("showCancelForOrder:", showCancelForOrder);
+        console.log("showCancelPendingOrder:", showCancelPendingOrder);
 
         return (
           <View style={styles.stickyFooter}>
@@ -3110,7 +3149,9 @@ export default function ViewTrackOrderPage() {
                     style={styles.cancelOrderButton}
                     onPress={handleCancelOrder}
                   >
-                    <Text style={styles.cancelOrderButtonText}>Cancel Order</Text>
+                    <Text style={styles.cancelOrderButtonText}>
+                      Cancel Order
+                    </Text>
                   </TouchableOpacity>
                 </>
               )}
@@ -3122,7 +3163,9 @@ export default function ViewTrackOrderPage() {
                     style={styles.cancelOrderButton}
                     onPress={handleCancelOrder}
                   >
-                    <Text style={styles.cancelOrderButtonText}>Cancel Order</Text>
+                    <Text style={styles.cancelOrderButtonText}>
+                      Cancel Order
+                    </Text>
                   </TouchableOpacity>
                 </>
               )}

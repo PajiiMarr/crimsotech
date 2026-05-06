@@ -30148,8 +30148,17 @@ class PurchasesBuyer(viewsets.ViewSet):
             total_items = 0
             subtotal = 0
             total_tax = 0
+            total_discount = 0
+            shop_total_amount = 0  # ADDED: Track total amount from checkouts
             
             for checkout in order.checkout_set.all():
+                # ADDED: Sum checkout.total_amount for this order
+                shop_total_amount += float(checkout.total_amount or 0)
+                
+                # Get discount from checkout - use as-is (already total discount for this checkout)
+                if hasattr(checkout, 'discount_applied') and checkout.discount_applied:
+                    total_discount += float(checkout.discount_applied)
+                
                 if checkout.cart_item and checkout.cart_item.product:
                     product = checkout.cart_item.product
                     total_items += checkout.quantity
@@ -30174,8 +30183,9 @@ class PurchasesBuyer(viewsets.ViewSet):
                     item_subtotal = float(checkout.total_amount or 0)
                     subtotal += item_subtotal
                     
-                    # Calculate tax for this item (12% VAT)
-                    item_tax = float(variant.value_added_tax_amount) if variant and variant.value_added_tax_amount else 0.00
+                    # Calculate tax for this item - MULTIPLY BY QUANTITY
+                    variant_vat = float(variant.value_added_tax_amount) if variant and variant.value_added_tax_amount else 0.00
+                    item_tax = variant_vat * checkout.quantity
                     total_tax += item_tax
                     
                     product_serializer = ProductSerializer(product, context={'request': request})
@@ -30336,13 +30346,14 @@ class PurchasesBuyer(viewsets.ViewSet):
                 if hasattr(checkout, 'transaction_fee') and checkout.transaction_fee:
                     total_transaction_fee += float(checkout.transaction_fee)
 
+            # FIX: Use shop_total_amount (sum of checkout.total_amount) for total
             order_summary = {
                 'subtotal': str(subtotal),
                 'shipping_fee': str(total_shipping_fee),
                 'shipping_fees_breakdown': shipping_fees_by_shop,
                 'tax': str(total_tax),
-                'discount': '0.00',
-                'total': str(order.total_amount),
+                'discount': str(total_discount),
+                'total': str(shop_total_amount),  # FIXED: Sum of checkout.total_amount
                 'transaction_fee': str(total_transaction_fee),
                 'payment_fee': str(total_transaction_fee),
             }
@@ -30353,6 +30364,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                     'status': order.status,
                     'status_display': self._get_status_display(order.status),
                     'status_color': self._get_status_color(order.status),
+                    'total_amount': str(shop_total_amount),  # ADDED: total_amount in order
                     'created_at': order.created_at.isoformat(),
                     'updated_at': order.updated_at.isoformat() if order.updated_at else None,
                     'completed_at': order.completed_at.isoformat() if order.completed_at else None,
@@ -30408,6 +30420,8 @@ class PurchasesBuyer(viewsets.ViewSet):
         except Exception as exc:
             logger.exception('Unhandled exception in view_order_detail for order %s user %s: %s', pk, user_id, exc)
             return Response({'error': 'An internal error occurred while fetching the order'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
 
     def _get_item_status(self, order, checkout):
         """Determine the correct status for an item"""
