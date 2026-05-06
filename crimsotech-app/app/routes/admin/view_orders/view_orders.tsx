@@ -27,7 +27,11 @@ import {
   MoreVertical,
   Undo,
   Ban,
-  RefreshCw
+  RefreshCw,
+  TrendingUp,
+  Percent,
+  PhilippinePeso,
+  DollarSign
 } from 'lucide-react';
 import AxiosInstance from "~/components/axios/Axios";
 import { useState } from 'react';
@@ -62,6 +66,7 @@ import {
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
 import { Link } from "react-router";
+
 export function meta(): Route.MetaDescriptors {
     return [
         {
@@ -69,26 +74,30 @@ export function meta(): Route.MetaDescriptors {
         }
     ]
 }
+
 interface MediaItem {
     id: string;
     url: string;
     file_type: string;
 }
+
 interface ShopInfo {
     id: string;
     name: string;
     contact_number?: string;
     verified?: boolean;
 }
+
 interface CategoryInfo {
     id: string;
     name: string;
 }
+
 interface ProductInfo {
     id: string;
     name: string;
     description: string;
-    price: string;
+    price: number;
     condition: string;
     is_refundable: boolean | null;
     refund_days: number;
@@ -100,14 +109,15 @@ interface ProductInfo {
     media: MediaItem[];
     primary_image: MediaItem | null;
 }
+
 interface VariantInfo {
     id: string;
     title: string;
     sku_code: string;
-    price: string | null;
-    compare_price: string | null;
+    price: number | null;
+    compare_price: number | null;
     quantity: number;
-    weight: string | null;
+    weight: number | null;
     weight_unit: string;
     is_active: boolean;
     is_refundable: boolean;
@@ -115,17 +125,20 @@ interface VariantInfo {
     allow_swap: boolean;
     swap_type: string | null;
     swap_description: string | null;
-    original_price: string | null;
+    original_price: number | null;
     usage_period: number | null;
     usage_unit: string | null;
     depreciation_rate: number | null;
-    minimum_additional_payment: string;
-    maximum_additional_payment: string;
+    minimum_additional_payment: number;
+    maximum_additional_payment: number;
     image_url: string | null;
     critical_stock: number | null;
+    value_added_tax: number | null;
+    value_added_tax_amount: number | null;
     created_at: string | null;
     updated_at: string | null;
 }
+
 interface UserInfo {
     id: string;
     username: string;
@@ -134,6 +147,7 @@ interface UserInfo {
     last_name: string;
     contact_number: string;
 }
+
 interface CartItemInfo {
     id: string;
     product: ProductInfo;
@@ -143,6 +157,7 @@ interface CartItemInfo {
     added_at: string | null;
     user: UserInfo | null;
 }
+
 interface OrderItem {
     id: string;
     cart_item: CartItemInfo;
@@ -151,16 +166,24 @@ interface OrderItem {
         name: string;
         code: string;
         discount_type: string;
-        value: string;
-        minimum_spend: string;
+        value: number;
+        minimum_spend: number;
         valid_until: string | null;
         is_active: boolean;
     } | null;
-    total_amount: string;
+    quantity: number;
+    price: number;
+    subtotal: number;
+    shipping_fee: number;
+    transaction_fee: number;
+    vat_amount: number;
+    discount_applied: number;
+    total_amount: number;
     status: string;
     remarks: string;
     created_at: string | null;
 }
+
 interface ShippingAddressInfo {
     id: string;
     recipient_name: string;
@@ -183,6 +206,7 @@ interface ShippingAddressInfo {
     created_at: string | null;
     updated_at: string | null;
 }
+
 interface DeliveryInfo {
     id: string;
     status: string;
@@ -192,12 +216,19 @@ interface DeliveryInfo {
     picked_at: string | null;
     delivered_at: string | null;
 }
+
 interface Order {
     order_id: string;
     user: UserInfo;
     approval: string;
     status: string;
-    total_amount: string;
+    total_amount: number;
+    order_subtotal: number;
+    order_shipping_fees: number;
+    order_transaction_fees: number;
+    order_vat_total: number;
+    order_discount_total: number;
+    order_checkout_total: number;
     payment_method: string;
     delivery_method: string;
     delivery_address: string;
@@ -205,14 +236,17 @@ interface Order {
     created_at: string;
     updated_at: string;
     completed_at: string | null;
+    refund_expire_date: string | null;
     items: OrderItem[];
     delivery?: DeliveryInfo;
 }
+
 interface LoaderData {
     user: any;
     order: Order | null;
     error?: string;
 }
+
 // Action configurations
 const actionConfigs = {
     markAsShipped: {
@@ -248,24 +282,30 @@ const actionConfigs = {
         needsReason: false,
     },
 };
+
 export async function loader({ request, context, params }: Route.LoaderArgs): Promise<LoaderData> {
     const { requireRole } = await import("~/middleware/role-require.server");
     const { fetchUserRole } = await import("~/middleware/role.server");
     const { order_id } = params;
+    
     let user = (context as any).user;
     if (!user) {
         user = await fetchUserRole({ request, context });
     }
     await requireRole(request, context, ["isAdmin"]);
+    
     const { getSession } = await import('~/sessions.server');
     const session = await getSession(request.headers.get("Cookie"));
+    
     if (!order_id) {
         return { user, order: null, error: "Order ID is required" };
     }
+    
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (!uuidRegex.test(order_id)) {
         return { user, order: null, error: "Invalid order ID format" };
     }
+    
     try {
         const response = await AxiosInstance.get(`/admin-orders/get_order/?order_id=${order_id}`);
         if (response.data.success) {
@@ -285,6 +325,7 @@ export async function loader({ request, context, params }: Route.LoaderArgs): Pr
         };
     }
 }
+
 export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
     const { user, order: initialOrder, error } = loaderData;
     const [order, setOrder] = useState<Order | null>(initialOrder);
@@ -294,6 +335,7 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
     const [reason, setReason] = useState("");
     const isMobile = useIsMobile();
     const { toast } = useToast();
+
     const refreshOrder = async () => {
         if (!order?.order_id) return;
         setLoading(true);
@@ -308,6 +350,7 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
             setLoading(false);
         }
     };
+
     const getStatusBadge = (status: string) => {
         const statusConfig: Record<string, { variant: "default" | "secondary" | "outline" | "destructive", label: string }> = {
             pending: { variant: "secondary", label: "Pending" },
@@ -322,6 +365,11 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
         const config = statusConfig[status?.toLowerCase() || 'pending'] || statusConfig.pending;
         return <Badge variant={config.variant}>{config.label}</Badge>;
     };
+
+    const formatCurrency = (amount: number) => {
+        return `₱${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    };
+
     const getAvailableActions = () => {
         if (!order) return [];
         const actions = [];
@@ -352,7 +400,6 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
                 variant: "destructive" as const,
             });
         }
-        // Show compensate rider button for failed deliveries where rider returned to seller
         if (deliveryStatus === 'failed' && order.delivery?.failed_reason === 'return_to_seller') {
             actions.push({
                 id: "compensateRider",
@@ -363,13 +410,16 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
         }
         return actions;
     };
+
     const availableActions = getAvailableActions();
     const currentAction = activeAction ? actionConfigs[activeAction as keyof typeof actionConfigs] : null;
+
     const handleActionClick = (actionId: string) => {
         setActiveAction(actionId);
         setReason("");
         setShowDialog(true);
     };
+
     const handleConfirm = async () => {
         if (!activeAction || !order) return;
         if (currentAction?.needsReason && !reason.trim()) {
@@ -412,7 +462,6 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
                 toast({
                     title: "Success",
                     description: response.data.message || "Action completed successfully",
-                    variant: "success",
                 });
                 await refreshOrder();
             }
@@ -430,12 +479,14 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
             setReason("");
         }
     };
+
     const handleCancel = () => {
         if (loading) return;
         setShowDialog(false);
         setActiveAction(null);
         setReason("");
     };
+
     const renderDialogContent = () => {
         if (!currentAction || !order) return null;
         return (
@@ -453,7 +504,7 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
                             Customer: {order.user.first_name} {order.user.last_name}
                         </p>
                         <p className="text-xs text-muted-foreground">
-                            Amount: ₱{parseFloat(order.total_amount).toLocaleString()}
+                            Total: {formatCurrency(order.total_amount)}
                         </p>
                         <p className="text-xs text-muted-foreground">
                             Current Status: {order.status}
@@ -467,7 +518,7 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
                                     Failed Reason: {order.delivery.failed_reason === 'return_to_seller' ? 'Return to Seller' : order.delivery.failed_reason}
                                 </p>
                                 <p className="text-xs text-muted-foreground">
-                                    Delivery Fee: ₱{order.delivery.delivery_fee?.toLocaleString() || 0}
+                                    Delivery Fee: {formatCurrency(order.delivery.delivery_fee || 0)}
                                 </p>
                             </>
                         )}
@@ -510,6 +561,7 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
             </>
         );
     };
+
     const renderDesktopDialog = () => {
         if (!currentAction || !order) return null;
         return (
@@ -539,6 +591,7 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
             </AlertDialog>
         );
     };
+
     const renderMobileDialog = () => {
         if (!currentAction || !order) return null;
         return (
@@ -576,6 +629,7 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
             </Drawer>
         );
     };
+
     if (error) {
         return (
             <UserProvider user={user}>
@@ -591,6 +645,7 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
             </UserProvider>
         );
     }
+
     if (!order) {
         return (
             <UserProvider user={user}>
@@ -606,6 +661,7 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
             </UserProvider>
         );
     }
+
     return (
         <UserProvider user={user}>
             <div className="container mx-auto p-3 sm:p-4 md:p-6 space-y-4 sm:space-y-6">
@@ -617,6 +673,7 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
                         </div>
                     </div>
                 )}
+
                 {/* Header */}
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                     <nav className="text-xs sm:text-sm text-muted-foreground flex items-center gap-1 flex-wrap">
@@ -667,6 +724,7 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
                         </DropdownMenu>
                     )}
                 </div>
+
                 {/* Main Content */}
                 <Card>
                     <CardHeader className="px-4 py-3 sm:px-6 sm:py-4">
@@ -688,36 +746,50 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
                             </div>
                         </div>
                     </CardHeader>
+
                     <CardContent className="px-4 py-3 sm:px-6 sm:py-4 space-y-6">
-                        {/* Order Summary */}
-                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                            <div>
-                                <p className="text-xs sm:text-sm text-muted-foreground mb-1">Total Amount</p>
-                                <p className="text-lg sm:text-xl font-bold text-primary">₱{parseFloat(order.total_amount).toLocaleString()}</p>
-                            </div>
-                            <div>
-                                <p className="text-xs sm:text-sm text-muted-foreground mb-1">Payment Method</p>
-                                <div className="flex items-center gap-1">
-                                    <CreditCard className="w-4 h-4" />
-                                    <p className="text-sm sm:text-base font-medium">{order.payment_method}</p>
+                        {/* Order Summary - Enhanced with financial breakdown */}
+                        <div>
+                            <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
+                                <Receipt className="w-4 h-4" />
+                                Order Financial Summary
+                            </h3>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                                <div className="bg-muted/30 rounded-lg p-3">
+                                    <p className="text-xs text-muted-foreground mb-1">Subtotal</p>
+                                    <p className="text-base font-semibold">{formatCurrency(order.order_subtotal)}</p>
+                                    <p className="text-xs text-muted-foreground">Before fees & discounts</p>
                                 </div>
-                            </div>
-                            <div>
-                                <p className="text-xs sm:text-sm text-muted-foreground mb-1">Total Items</p>
-                                <div className="flex items-center gap-1">
-                                    <Package className="w-4 h-4" />
-                                    <p className="text-sm sm:text-base font-medium">{order.items.length}</p>
+                                <div className="bg-muted/30 rounded-lg p-3">
+                                    <p className="text-xs text-muted-foreground mb-1">Shipping Fee</p>
+                                    <p className="text-base font-semibold">{formatCurrency(order.order_shipping_fees)}</p>
+                                    <p className="text-xs text-muted-foreground">Delivery charge</p>
                                 </div>
-                            </div>
-                            <div>
-                                <p className="text-xs sm:text-sm text-muted-foreground mb-1">Last Updated</p>
-                                <div className="flex items-center gap-1">
-                                    <Clock className="w-4 h-4" />
-                                    <p className="text-xs sm:text-sm font-medium">{new Date(order.updated_at).toLocaleDateString()}</p>
+                                <div className="bg-muted/30 rounded-lg p-3">
+                                    <p className="text-xs text-muted-foreground mb-1">Discount Applied</p>
+                                    <p className="text-base font-semibold text-green-600">-{formatCurrency(order.order_discount_total)}</p>
+                                    <p className="text-xs text-muted-foreground">Voucher discount</p>
+                                </div>
+                                <div className="bg-muted/30 rounded-lg p-3">
+                                    <p className="text-xs text-muted-foreground mb-1">Transaction Fee</p>
+                                    <p className="text-base font-semibold text-orange-600">{formatCurrency(order.order_transaction_fees)}</p>
+                                    <p className="text-xs text-muted-foreground">5% capped at ₱50</p>
+                                </div>
+                                <div className="bg-muted/30 rounded-lg p-3">
+                                    <p className="text-xs text-muted-foreground mb-1">VAT Collected</p>
+                                    <p className="text-base font-semibold">{formatCurrency(order.order_vat_total)}</p>
+                                    <p className="text-xs text-muted-foreground">12% Value Added Tax</p>
+                                </div>
+                                <div className="bg-primary/10 rounded-lg p-3">
+                                    <p className="text-xs text-muted-foreground mb-1">Total Amount</p>
+                                    <p className="text-lg font-bold text-primary">{formatCurrency(order.total_amount)}</p>
+                                    <p className="text-xs text-muted-foreground">Final payment</p>
                                 </div>
                             </div>
                         </div>
+
                         <Separator />
+
                         {/* Customer & Delivery */}
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                             <div>
@@ -763,6 +835,7 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
                                 )}
                             </div>
                         </div>
+
                         {/* Delivery Information (if failed) */}
                         {order.delivery && order.delivery.status === 'failed' && (
                             <>
@@ -784,7 +857,7 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
                                             </div>
                                             <div>
                                                 <span className="text-muted-foreground">Delivery Fee: </span>
-                                                <span className="font-medium">₱{order.delivery.delivery_fee?.toLocaleString() || 0}</span>
+                                                <span className="font-medium">{formatCurrency(order.delivery.delivery_fee || 0)}</span>
                                             </div>
                                             <div>
                                                 <span className="text-muted-foreground">Requested Date: </span>
@@ -806,8 +879,10 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
                                 </div>
                             </>
                         )}
+
                         <Separator />
-                        {/* Order Items */}
+
+                        {/* Order Items with Financial Breakdown */}
                         <div>
                             <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
                                 <Package className="w-4 h-4" />
@@ -857,13 +932,42 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
                                                         </div>
                                                         <div className="text-left sm:text-right">
                                                             <div className="text-base sm:text-lg font-bold text-primary">
-                                                                ₱{parseFloat(item.total_amount).toLocaleString()}
+                                                                {formatCurrency(item.total_amount)}
                                                             </div>
                                                             <div className="text-xs sm:text-sm text-muted-foreground">
-                                                                Unit: ₱{parseFloat(product.price).toLocaleString()} x {item.cart_item.quantity}
+                                                                Unit: {formatCurrency(item.price)} x {item.quantity}
                                                             </div>
                                                         </div>
                                                     </div>
+
+                                                    {/* Item Financial Breakdown */}
+                                                    <div className="mt-3 pt-2 border-t border-dashed">
+                                                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                                                            <div>
+                                                                <p className="text-muted-foreground">Subtotal</p>
+                                                                <p className="font-medium">{formatCurrency(item.subtotal)}</p>
+                                                            </div>
+                                                            <div>
+                                                                <p className="text-muted-foreground">Shipping</p>
+                                                                <p className="font-medium">{formatCurrency(item.shipping_fee)}</p>
+                                                            </div>
+                                                            <div>
+                                                                <p className="text-muted-foreground">Transaction Fee</p>
+                                                                <p className="font-medium">{formatCurrency(item.transaction_fee)}</p>
+                                                            </div>
+                                                            <div>
+                                                                <p className="text-muted-foreground">VAT</p>
+                                                                <p className="font-medium">{formatCurrency(item.vat_amount)}</p>
+                                                            </div>
+                                                            {item.discount_applied > 0 && (
+                                                                <div className="col-span-2 sm:col-span-4">
+                                                                    <p className="text-muted-foreground">Discount Applied</p>
+                                                                    <p className="font-medium text-green-600">-{formatCurrency(item.discount_applied)}</p>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    </div>
+
                                                     {item.voucher && (
                                                         <div className="bg-muted/50 rounded-lg p-2 sm:p-3 mt-2">
                                                             <div className="flex items-center gap-2">
@@ -871,7 +975,7 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
                                                                 <div>
                                                                     <p className="text-xs sm:text-sm font-medium">{item.voucher.name}</p>
                                                                     <p className="text-xs text-muted-foreground">
-                                                                        Code: {item.voucher.code} • Discount: ₱{parseFloat(item.voucher.value).toLocaleString()}
+                                                                        Code: {item.voucher.code} • Discount: {formatCurrency(item.voucher.value)} {item.voucher.discount_type === 'percentage' ? '%' : 'OFF'}
                                                                     </p>
                                                                 </div>
                                                             </div>
@@ -886,6 +990,7 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
                         </div>
                     </CardContent>
                 </Card>
+
                 {isMobile ? renderMobileDialog() : renderDesktopDialog()}
             </div>
         </UserProvider>

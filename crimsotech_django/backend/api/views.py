@@ -8056,8 +8056,38 @@ class AdminOrders(viewsets.ViewSet):
                 return float(first_variant.price)
         return 0
 
+    def _calculate_item_totals(self, checkout):
+        """Calculate item totals including shipping, transaction fees, VAT, and discount"""
+        item_total = float(checkout.total_amount) if checkout.total_amount else 0
+        shipping_fee = float(checkout.shipping_fee) if checkout.shipping_fee else 0
+        transaction_fee = float(checkout.transaction_fee) if checkout.transaction_fee else 0
+        discount_applied = float(checkout.discount_applied) if checkout.discount_applied else 0
+        
+        # Calculate VAT from variant
+        vat_amount = 0
+        if checkout.cart_item and checkout.cart_item.variant:
+            variant = checkout.cart_item.variant
+            if variant.value_added_tax_amount:
+                vat_amount = float(variant.value_added_tax_amount) * checkout.quantity
+        elif checkout.direct_variant_id:
+            try:
+                variant = Variants.objects.get(id=checkout.direct_variant_id)
+                if variant.value_added_tax_amount:
+                    vat_amount = float(variant.value_added_tax_amount) * checkout.quantity
+            except Variants.DoesNotExist:
+                pass
+        
+        return {
+            'item_total': item_total,
+            'shipping_fee': shipping_fee,
+            'transaction_fee': transaction_fee,
+            'vat_amount': vat_amount,
+            'discount_applied': discount_applied,
+            'subtotal': item_total - shipping_fee - transaction_fee + discount_applied
+        }
+
     def _serialize_order(self, order):
-        """Shared helper to serialize an order object consistently"""
+        """Shared helper to serialize an order object consistently with full financial breakdown"""
         checkouts = order.checkout_set.select_related(
             'cart_item__product__shop',
             'cart_item__product__category',
@@ -8067,6 +8097,13 @@ class AdminOrders(viewsets.ViewSet):
         ).all()
 
         items = []
+        order_subtotal = Decimal('0')
+        order_shipping_fees = Decimal('0')
+        order_transaction_fees = Decimal('0')
+        order_vat_total = Decimal('0')
+        order_discount_total = Decimal('0')
+        order_checkout_total = Decimal('0')
+
         for checkout in checkouts:
             cart_item = checkout.cart_item
             product = cart_item.product if cart_item else None
@@ -8077,6 +8114,17 @@ class AdminOrders(viewsets.ViewSet):
             price = self._get_product_price(product, variant)
             product_media = self._get_product_media(product) if product else []
             variant_image_url = self._get_variant_media(variant) if variant else None
+
+            # Calculate financial breakdown for this item
+            totals = self._calculate_item_totals(checkout)
+            
+            # Accumulate order totals
+            order_subtotal += Decimal(str(totals['subtotal']))
+            order_shipping_fees += Decimal(str(totals['shipping_fee']))
+            order_transaction_fees += Decimal(str(totals['transaction_fee']))
+            order_vat_total += Decimal(str(totals['vat_amount']))
+            order_discount_total += Decimal(str(totals['discount_applied']))
+            order_checkout_total += Decimal(str(totals['item_total']))
 
             item_data = {
                 'id': str(checkout.id),
@@ -8130,6 +8178,8 @@ class AdminOrders(viewsets.ViewSet):
                         'maximum_additional_payment': float(variant.maximum_additional_payment) if variant.maximum_additional_payment else 0,
                         'image_url': variant_image_url,
                         'critical_stock': variant.critical_stock,
+                        'value_added_tax': float(variant.value_added_tax) if variant.value_added_tax else 0,
+                        'value_added_tax_amount': float(variant.value_added_tax_amount) if variant.value_added_tax_amount else 0,
                         'created_at': variant.created_at.isoformat() if variant.created_at else None,
                         'updated_at': variant.updated_at.isoformat() if variant.updated_at else None,
                     } if variant else None,
@@ -8155,7 +8205,14 @@ class AdminOrders(viewsets.ViewSet):
                     'valid_until': checkout.voucher.end_date.isoformat() if checkout.voucher.end_date else None,
                     'is_active': checkout.voucher.is_active
                 } if checkout.voucher else None,
-                'total_amount': float(checkout.total_amount),
+                'quantity': checkout.quantity,
+                'price': price,
+                'subtotal': totals['subtotal'],
+                'shipping_fee': totals['shipping_fee'],
+                'transaction_fee': totals['transaction_fee'],
+                'vat_amount': totals['vat_amount'],
+                'discount_applied': totals['discount_applied'],
+                'total_amount': totals['item_total'],
                 'status': checkout.status,
                 'remarks': checkout.remarks or '',
                 'created_at': checkout.created_at.isoformat() if checkout.created_at else None,
@@ -8187,6 +8244,23 @@ class AdminOrders(viewsets.ViewSet):
                 'updated_at': order.shipping_address.updated_at.isoformat() if order.shipping_address.updated_at else None,
             }
 
+        # Get delivery info
+        delivery_info = None
+        delivery = Delivery.objects.filter(order=order).first()
+        if delivery:
+            delivery_info = {
+                'delivery_id': str(delivery.id),
+                'rider_name': f"{delivery.rider.rider.first_name} {delivery.rider.rider.last_name}".strip() or delivery.rider.rider.username if delivery.rider else None,
+                'rider_phone': delivery.rider.rider.contact_number if delivery.rider else None,
+                'status': delivery.status,
+                'distance_km': float(delivery.distance_km) if delivery.distance_km else None,
+                'estimated_minutes': delivery.estimated_minutes,
+                'delivery_fee': float(delivery.delivery_fee) if delivery.delivery_fee else None,
+                'picked_at': delivery.picked_at.isoformat() if delivery.picked_at else None,
+                'delivered_at': delivery.delivered_at.isoformat() if delivery.delivered_at else None,
+                'created_at': delivery.created_at.isoformat() if delivery.created_at else None,
+            }
+
         return {
             'order_id': str(order.order),
             'user': {
@@ -8199,15 +8273,23 @@ class AdminOrders(viewsets.ViewSet):
             },
             'status': order.status,
             'total_amount': float(order.total_amount),
+            'order_subtotal': float(order_subtotal),
+            'order_shipping_fees': float(order_shipping_fees),
+            'order_transaction_fees': float(order_transaction_fees),
+            'order_vat_total': float(order_vat_total),
+            'order_discount_total': float(order_discount_total),
+            'order_checkout_total': float(order_checkout_total),
             'payment_method': order.payment_method,
             'delivery_method': order.delivery_method,
             'delivery_address': order.delivery_address_text or (
                 order.shipping_address.get_full_address() if order.shipping_address else ''
             ),
             'shipping_address': shipping_address_info,
+            'delivery_info': delivery_info,
             'created_at': order.created_at.isoformat() if order.created_at else None,
             'updated_at': order.updated_at.isoformat() if order.updated_at else None,
             'completed_at': order.completed_at.isoformat() if order.completed_at else None,
+            'refund_expire_date': order.refund_expire_date.isoformat() if order.refund_expire_date else None,
             'items': items
         }
 
@@ -8240,10 +8322,46 @@ class AdminOrders(viewsets.ViewSet):
             pending_orders_in_period = date_filtered_orders_qs.filter(status='pending').count()
             cancelled_orders_in_period = date_filtered_orders_qs.filter(status='cancelled').count()
             
-            revenue_data_in_period = date_filtered_orders_qs.filter(status='completed').aggregate(
-                total_revenue=Sum('total_amount')
+            # Calculate revenue from checkouts (more accurate)
+            completed_checkouts = Checkout.objects.filter(
+                order__in=date_filtered_orders_qs.filter(status='completed')
             )
-            total_revenue_in_period = revenue_data_in_period['total_revenue'] or Decimal('0')
+            total_revenue_in_period = completed_checkouts.aggregate(
+                total_revenue=Sum('total_amount')
+            )['total_revenue'] or Decimal('0')
+            
+            # Calculate transaction fees collected
+            total_transaction_fees = Checkout.objects.filter(
+                order__in=date_filtered_orders_qs.filter(status='completed'),
+                transaction_fee__isnull=False
+            ).aggregate(total_fees=Sum('transaction_fee'))['total_fees'] or Decimal('0')
+            
+            # Calculate shipping fees collected
+            total_shipping_fees = Delivery.objects.filter(
+                order__in=date_filtered_orders_qs.filter(status='completed'),
+                status='delivered'
+            ).aggregate(total_shipping=Sum('delivery_fee'))['total_shipping'] or Decimal('0')
+            
+            # Calculate VAT collected
+            total_vat = Decimal('0')
+            for checkout in completed_checkouts.select_related('cart_item__variant'):
+                if checkout.cart_item and checkout.cart_item.variant:
+                    variant = checkout.cart_item.variant
+                    if variant.value_added_tax_amount:
+                        total_vat += Decimal(str(variant.value_added_tax_amount)) * checkout.quantity
+                elif checkout.direct_variant_id:
+                    try:
+                        variant = Variants.objects.get(id=checkout.direct_variant_id)
+                        if variant.value_added_tax_amount:
+                            total_vat += Decimal(str(variant.value_added_tax_amount)) * checkout.quantity
+                    except Variants.DoesNotExist:
+                        pass
+            
+            # Calculate discounts applied
+            total_discounts = Checkout.objects.filter(
+                order__in=date_filtered_orders_qs.filter(status='completed'),
+                discount_applied__gt=0
+            ).aggregate(total_discount=Sum('discount_applied'))['total_discount'] or Decimal('0')
             
             today = timezone.now().date()
             today_orders_in_period = 0
@@ -8284,9 +8402,13 @@ class AdminOrders(viewsets.ViewSet):
                 success_rate_in_period = (completed_orders_in_period / total_orders_in_period) * 100
             
             all_time_total_orders = Order.objects.all().count()
-            all_time_revenue = Order.objects.filter(status='completed').aggregate(
-                total_revenue=Sum('total_amount')
-            )['total_revenue'] or Decimal('0')
+            all_time_revenue = Checkout.objects.filter(
+                order__status='completed'
+            ).aggregate(total_revenue=Sum('total_amount'))['total_revenue'] or Decimal('0')
+            all_time_transaction_fees = Checkout.objects.filter(
+                order__status='completed',
+                transaction_fee__isnull=False
+            ).aggregate(total_fees=Sum('transaction_fee'))['total_fees'] or Decimal('0')
             
             order_metrics = {
                 'total_orders': total_orders_in_period,
@@ -8294,15 +8416,21 @@ class AdminOrders(viewsets.ViewSet):
                 'completed_orders': completed_orders_in_period,
                 'cancelled_orders': cancelled_orders_in_period,
                 'total_revenue': float(total_revenue_in_period),
+                'total_transaction_fees': float(total_transaction_fees),
+                'total_shipping_fees': float(total_shipping_fees),
+                'total_vat_collected': float(total_vat),
+                'total_discounts': float(total_discounts),
                 'today_orders': today_orders_in_period,
                 'monthly_orders': monthly_orders_in_period,
                 'avg_order_value': float(avg_order_value_in_period),
                 'success_rate': float(success_rate_in_period),
                 'all_time_total_orders': all_time_total_orders,
-                'all_time_revenue': float(all_time_revenue)
+                'all_time_revenue': float(all_time_revenue),
+                'all_time_transaction_fees': float(all_time_transaction_fees),
+                'financial_breakdown_note': 'Revenue from completed orders only. Transaction fees: 5% capped at ₱50 per checkout. VAT from variant.value_added_tax_amount × quantity.'
             }
             
-            recent_orders = self._get_recent_orders()
+            recent_orders = self._get_recent_orders(start_date, end_date if filter_applied else None)
             
             return Response({
                 'success': True,
@@ -8578,12 +8706,20 @@ class AdminOrders(viewsets.ViewSet):
             if filter_applied and start_date and end_date:
                 orders_qs = orders_qs.filter(created_at__gte=start_date, created_at__lte=end_date)
             
-            revenue_data = orders_qs.aggregate(total_revenue=Sum('total_amount'))
+            revenue_data = Checkout.objects.filter(
+                order__in=orders_qs
+            ).aggregate(total_revenue=Sum('total_amount'))
             period_revenue = revenue_data['total_revenue'] or Decimal('0')
             
+            # Calculate transaction fees for period
+            transaction_fees = Checkout.objects.filter(
+                order__in=orders_qs,
+                transaction_fee__isnull=False
+            ).aggregate(total_fees=Sum('transaction_fee'))['total_fees'] or Decimal('0')
+            
             today = timezone.now().date()
-            daily_revenue = Order.objects.filter(
-                status='completed', created_at__date=today
+            daily_revenue = Checkout.objects.filter(
+                order__status='completed', order__created_at__date=today
             ).aggregate(revenue=Sum('total_amount'))['revenue'] or Decimal('0')
             
             top_customers = orders_qs.values(
@@ -8612,6 +8748,7 @@ class AdminOrders(viewsets.ViewSet):
                 'success': True,
                 'stats': {
                     'period_revenue': float(period_revenue),
+                    'period_transaction_fees': float(transaction_fees),
                     'revenue_today': float(daily_revenue),
                     'top_customers': list(top_customers),
                     'top_products': list(top_products),
@@ -8702,7 +8839,6 @@ class AdminOrders(viewsets.ViewSet):
             return Response({'success': False, 'error': 'Order not found'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             return Response({'success': False, 'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        
 
 
 class AdminRiders(viewsets.ViewSet):
