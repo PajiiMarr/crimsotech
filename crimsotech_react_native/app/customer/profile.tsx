@@ -388,6 +388,7 @@ export default function ProfileScreen() {
   const [showBalance, setShowBalance] = useState(true);
   const [shopFilters, setShopFilters] = useState<ShopFilter[]>([]);
   const [selectedFilter, setSelectedFilter] = useState("all");
+  const [balanceShopFilter, setBalanceShopFilter] = useState("all");
 
   // ── Withdrawal state
   const [showWithdrawModal, setShowWithdrawModal] = useState(false);
@@ -616,6 +617,55 @@ export default function ProfileScreen() {
     } finally {
       setSubmittingWithdraw(false);
     }
+  };
+
+  // ─── Calculate filtered balance by shop ────────────────────────────────────
+
+  const getFilteredBalance = () => {
+    if (!wallet || !transactions.length) {
+      return {
+        available_balance: wallet?.available_balance || 0,
+        pending_balance: wallet?.pending_balance || 0,
+        total_balance: (wallet?.available_balance || 0) + (wallet?.pending_balance || 0),
+        lifetime_earnings: wallet?.lifetime_earnings || 0,
+        lifetime_withdrawals: wallet?.lifetime_withdrawals || 0,
+      };
+    }
+
+    if (balanceShopFilter === "all") {
+      return {
+        available_balance: wallet.available_balance,
+        pending_balance: wallet.pending_balance,
+        total_balance: wallet.available_balance + wallet.pending_balance,
+        lifetime_earnings: wallet.lifetime_earnings,
+        lifetime_withdrawals: wallet.lifetime_withdrawals,
+      };
+    }
+
+    // Filter transactions by shop
+    const shopId = balanceShopFilter.replace("shop_", "");
+    const shopTransactions = transactions.filter((t) => t.shop_id === shopId);
+
+    // Calculate totals from filtered transactions
+    const availableAmount = shopTransactions
+      .filter((t) => t.type === "credit" && t.status === "completed")
+      .reduce((sum, t) => sum + t.amount, 0);
+
+    const pendingAmount = shopTransactions
+      .filter((t) => t.type === "credit" && t.status === "pending")
+      .reduce((sum, t) => sum + t.amount, 0);
+
+    const withdrawnAmount = shopTransactions
+      .filter((t) => t.type === "debit")
+      .reduce((sum, t) => sum + t.amount, 0);
+
+    return {
+      available_balance: availableAmount,
+      pending_balance: pendingAmount,
+      total_balance: availableAmount + pendingAmount,
+      lifetime_earnings: availableAmount + pendingAmount + withdrawnAmount,
+      lifetime_withdrawals: withdrawnAmount,
+    };
   };
 
   // ─── Filter transactions ──────────────────────────────────────────────────
@@ -1390,7 +1440,6 @@ export default function ProfileScreen() {
     >
       {[
         { key: "all", label: "All" },
-        { key: "personal", label: "Personal Listings" },
         ...shopFilters.map((s) => ({
           key: `shop_${s.id}`,
           label: s.name,
@@ -1400,14 +1449,14 @@ export default function ProfileScreen() {
           key={f.key}
           style={[
             styles.filterChip,
-            selectedFilter === f.key && styles.filterChipActive,
+            balanceShopFilter === f.key && styles.filterChipActive,
           ]}
-          onPress={() => setSelectedFilter(f.key)}
+          onPress={() => setBalanceShopFilter(f.key)}
         >
           <Text
             style={[
               styles.filterChipText,
-              selectedFilter === f.key && styles.filterChipTextActive,
+              balanceShopFilter === f.key && styles.filterChipTextActive,
             ]}
           >
             {f.label}
@@ -1417,86 +1466,93 @@ export default function ProfileScreen() {
     </ScrollView>
 
     {/* ── Balance cards with shadow and border ── */}
-    <View style={[styles.balanceGrid, { marginBottom: 10 }]}>
-      {/* Pending - NOW FIRST */}
-      <View style={[styles.balanceCard, { flex: 1 }]}>
-    <View style={styles.balanceCardHeader}>
-      <MaterialIcons name="hourglass-empty" size={16} color="#D97706" />
-      <Text style={styles.balanceCardLabel}>Pending</Text>
-      <TouchableOpacity onPress={() => setShowBalance(!showBalance)}>
-        <MaterialIcons
-          name={showBalance ? "visibility-off" : "visibility"}
-          size={16}
-          color="#9CA3AF"
-        />
-      </TouchableOpacity>
-    </View>
-    <Text style={[styles.balanceAmount, { color: "#D97706" }]}>
-      {showBalance
-        ? formatCurrency(wallet?.pending_balance || 0)
-        : "••••••"}
-    </Text>
-    <Text style={styles.balanceCardSub}>Awaiting release (3-day hold)</Text>
-  </View>
+    {(() => {
+      const filteredBalance = getFilteredBalance();
+      return (
+        <>
+          <View style={[styles.balanceGrid, { marginBottom: 10 }]}>
+            {/* Pending - NOW FIRST */}
+            <View style={[styles.balanceCard, { flex: 1 }]}>
+              <View style={styles.balanceCardHeader}>
+                <MaterialIcons name="hourglass-empty" size={16} color="#D97706" />
+                <Text style={styles.balanceCardLabel}>Pending</Text>
+                <TouchableOpacity onPress={() => setShowBalance(!showBalance)}>
+                  <MaterialIcons
+                    name={showBalance ? "visibility-off" : "visibility"}
+                    size={16}
+                    color="#9CA3AF"
+                  />
+                </TouchableOpacity>
+              </View>
+              <Text style={[styles.balanceAmount, { color: "#D97706" }]}>
+                {showBalance
+                  ? formatCurrency(filteredBalance.pending_balance || 0)
+                  : "••••••"}
+              </Text>
+              <Text style={styles.balanceCardSub}>Awaiting release</Text>
+            </View>
 
-      {/* Available - NOW SECOND */}
-      <View style={[styles.balanceCard, { flex: 1 }]}>
-    <View style={styles.balanceCardHeader}>
-      <MaterialIcons name="account-balance-wallet" size={16} color="#2563EB" />
-      <Text style={styles.balanceCardLabel}>Available</Text>
-    </View>
-    <Text style={[styles.balanceAmount, { color: "#059669" }]}>
-      {showBalance
-        ? formatCurrency(wallet?.available_balance || 0)
-        : "••••••"}
-    </Text>
-    <Text style={styles.balanceCardSub}>Ready to withdraw</Text>
-  </View>
-</View>
+            {/* Available - NOW SECOND */}
+            <View style={[styles.balanceCard, { flex: 1 }]}>
+              <View style={styles.balanceCardHeader}>
+                <MaterialIcons name="account-balance-wallet" size={16} color="#2563EB" />
+                <Text style={styles.balanceCardLabel}>Available</Text>
+              </View>
+              <Text style={[styles.balanceAmount, { color: "#059669" }]}>
+                {showBalance
+                  ? formatCurrency(filteredBalance.available_balance || 0)
+                  : "••••••"}
+              </Text>
+              <Text style={styles.balanceCardSub}>Ready to withdraw</Text>
+            </View>
+          </View>
 
-    <View style={styles.balanceGrid}>
-      {/* Total Sales */}
-      <View style={[styles.balanceCard, { flex: 1 }]}>
-        <View style={styles.balanceCardHeader}>
-          <MaterialIcons
-            name="trending-up"
-            size={16}
-            color="#059669"
-          />
-          <Text style={styles.balanceCardLabel}>Total Sales</Text>
-        </View>
-        <Text style={styles.balanceAmount}>
-          {showBalance
-            ? formatCurrency(wallet?.lifetime_earnings || 0)
-            : "••••••"}
-        </Text>
-        <Text style={styles.balanceCardSub}>
-          Lifetime earnings
-        </Text>
-      </View>
+          <View style={styles.balanceGrid}>
+            {/* Total Sales */}
+            <View style={[styles.balanceCard, { flex: 1 }]}>
+              <View style={styles.balanceCardHeader}>
+                <MaterialIcons
+                  name="trending-up"
+                  size={16}
+                  color="#059669"
+                />
+                <Text style={styles.balanceCardLabel}>Total Sales</Text>
+              </View>
+              <Text style={styles.balanceAmount}>
+                {showBalance
+                  ? formatCurrency(filteredBalance.lifetime_earnings || 0)
+                  : "••••••"}
+              </Text>
+              <Text style={styles.balanceCardSub}>
+                Lifetime earnings
+              </Text>
+            </View>
 
-      {/* Withdrawals */}
-      <View style={[styles.balanceCard, { flex: 1 }]}>
-        <View style={styles.balanceCardHeader}>
-          <MaterialIcons
-            name="trending-down"
-            size={16}
-            color="#DC2626"
-          />
-          <Text style={styles.balanceCardLabel}>Withdrawn</Text>
-        </View>
-        <Text style={[styles.balanceAmount, { color: "#DC2626" }]}>
-          {showBalance
-            ? formatCurrency(wallet?.lifetime_withdrawals || 0)
-            : "••••••"}
-        </Text>
-        <Text style={styles.balanceCardSub}>
-          {(wallet?.pending_withdrawals ?? 0) > 0 
-            ? `+ ${formatCurrency(wallet!.pending_withdrawals)} pending` 
-            : "All time"}
-        </Text>
-      </View>
-    </View>
+            {/* Withdrawals */}
+            <View style={[styles.balanceCard, { flex: 1 }]}>
+              <View style={styles.balanceCardHeader}>
+                <MaterialIcons
+                  name="trending-down"
+                  size={16}
+                  color="#DC2626"
+                />
+                <Text style={styles.balanceCardLabel}>Withdrawn</Text>
+              </View>
+              <Text style={[styles.balanceAmount, { color: "#DC2626" }]}>
+                {showBalance
+                  ? formatCurrency(filteredBalance.lifetime_withdrawals || 0)
+                  : "••••••"}
+              </Text>
+              <Text style={styles.balanceCardSub}>
+                {(wallet?.pending_withdrawals ?? 0) > 0 
+                  ? `+ ${formatCurrency(wallet!.pending_withdrawals)} pending` 
+                  : "All time"}
+              </Text>
+            </View>
+          </View>
+        </>
+      );
+    })()}
 
     {/* ── Withdraw button ── */}
     <View style={styles.financeCard}>

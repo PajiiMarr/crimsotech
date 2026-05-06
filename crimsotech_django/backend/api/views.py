@@ -26894,6 +26894,13 @@ class SellerOrderList(viewsets.ViewSet):
                     shop_status.save()
                     print(f"✅ Reset shop status from cancelled to processing for shop {shop.name}")
                 
+                # CRITICAL FIX: If there's a declined delivery, reset shop_status from rider_assigned to processing
+                declined_delivery = Delivery.objects.filter(order=order, shop=shop, status='declined').exists()
+                if declined_delivery and shop_status.status == 'rider_assigned':
+                    print(f"♻️  Resetting shop_status from 'rider_assigned' to 'processing' due to declined delivery")
+                    shop_status.status = 'processing'
+                    shop_status.save()
+                
                 # Check if order is confirmed (after potential reset)
                 if shop_status.status != 'processing':
                     return Response({"success": False, "message": "Order must be confirmed before arranging shipment"}, status=status.HTTP_400_BAD_REQUEST)
@@ -26905,21 +26912,15 @@ class SellerOrderList(viewsets.ViewSet):
                 if active_delivery:
                     return Response({"success": False, "message": "This shop already has an active delivery in progress"}, status=status.HTTP_400_BAD_REQUEST)
                 
-                # Handle existing declined delivery for this shop - reset it instead of creating new
-                existing_delivery = Delivery.objects.filter(order=order, shop=shop).first()
-                print(f"🔍 Looking for existing delivery: order={order.order}, shop={shop.name} - Found: {existing_delivery is not None}")
-                if existing_delivery:
-                    print(f"   Existing delivery ID={existing_delivery.id}, status={existing_delivery.status}, shop_id={existing_delivery.shop_id}")
-                if existing_delivery and existing_delivery.status == 'declined':
-                    print(f"♻️  Resetting declined delivery {existing_delivery.id} for shop {shop.name}")
-                    # Reset the declined delivery to pending
-                    existing_delivery.status = 'pending'
-                    existing_delivery.rider = None
-                    existing_delivery.picked_at = None
-                    existing_delivery.delivered_at = None
-                    existing_delivery.failed_reason = None
-                    existing_delivery.save()
-                    print(f"✅ Reset declined delivery to pending for order {order.order}")
+                # IMPORTANT: DO NOT reuse declined delivery - CREATE A NEW ONE instead
+                # Mark any existing declined delivery as cancelled/archived so it's not reused
+                existing_declined_delivery = Delivery.objects.filter(order=order, shop=shop, status='declined').first()
+                if existing_declined_delivery:
+                    print(f"🗑️  Archiving declined delivery {existing_declined_delivery.id} for shop {shop.name} - marking as cancelled")
+                    existing_declined_delivery.status = 'cancelled'  # Mark as cancelled so it's not reused
+                    existing_declined_delivery.failed_reason = 'Replaced by new delivery arrangement'
+                    existing_declined_delivery.save()
+                    print(f"✅ Declined delivery archived")
                 
                 # Get shipping_fee from request body
                 shipping_fee_from_request = request.data.get('shipping_fee')
@@ -27047,16 +27048,17 @@ class SellerOrderList(viewsets.ViewSet):
                 delivery_fee = nearest['delivery_fee']
                 estimated_minutes = nearest['estimated_minutes']
                 
-                # Check if there's an existing delivery for this shop (resetting declined one)
-                existing_delivery = Delivery.objects.filter(order=order, shop=shop).first()
-                
-                if existing_delivery:
-                    existing_delivery.rider = selected_rider
-                    existing_delivery.status = 'pending'
-                    existing_delivery.distance_km = Decimal(str(total_distance))
-                    existing_delivery.estimated_minutes = estimated_minutes
-                    existing_delivery.delivery_fee = delivery_fee
-                    existing_delivery.metadata = {
+                # ALWAYS CREATE A NEW DELIVERY - DO NOT REUSE EXISTING ONE
+                print(f"📦 Creating NEW delivery: order={order.order}, shop={shop.name} (ID={shop.id}), rider={selected_rider.rider.username}")
+                delivery = Delivery.objects.create(
+                    order=order,
+                    shop=shop,
+                    rider=selected_rider,
+                    status='pending',
+                    distance_km=Decimal(str(total_distance)),
+                    estimated_minutes=estimated_minutes,
+                    delivery_fee=delivery_fee,
+                    metadata={
                         'distance_to_pickup': distance_to_pickup,
                         'distance_pickup_to_dest': distance_pickup_to_dest,
                         'pickup_location': {'lat': pickup_lat, 'lng': pickup_lng, 'name': pickup_name},
@@ -27072,39 +27074,8 @@ class SellerOrderList(viewsets.ViewSet):
                             'estimated_minutes': estimated_minutes
                         }
                     }
-                    print(f"♻️  Updating existing delivery {existing_delivery.id} for shop {shop.name} with rider {selected_rider.rider.username}")
-                    existing_delivery.save()
-                    print(f"✅ Updated delivery - shop_id={existing_delivery.shop_id}")
-                    delivery = existing_delivery
-                else:
-                    # Create new delivery
-                    print(f"📦 Creating new delivery: order={order.order}, shop={shop.name} (ID={shop.id}), rider={selected_rider.rider.username}")
-                    delivery = Delivery.objects.create(
-                        order=order,
-                        shop=shop,
-                        rider=selected_rider,
-                        status='pending',
-                        distance_km=Decimal(str(total_distance)),
-                        estimated_minutes=estimated_minutes,
-                        delivery_fee=delivery_fee,
-                        metadata={
-                            'distance_to_pickup': distance_to_pickup,
-                            'distance_pickup_to_dest': distance_pickup_to_dest,
-                            'pickup_location': {'lat': pickup_lat, 'lng': pickup_lng, 'name': pickup_name},
-                            'destination_location': {'lat': dest_lat, 'lng': dest_lng},
-                            'all_riders_compared': rider_comparison,
-                            'shop_id': str(shop.id),
-                            'fee_source': fee_source,
-                            'nearest_rider': {
-                                'name': f"{selected_rider.rider.first_name} {selected_rider.rider.last_name}".strip() or selected_rider.rider.username,
-                                'username': selected_rider.rider.username,
-                                'total_distance_km': round(total_distance, 2),
-                                'delivery_fee': float(delivery_fee),
-                                'estimated_minutes': estimated_minutes
-                            }
-                        }
-                    )
-                    print(f"✅ Delivery created with ID={delivery.id}, shop_id={delivery.shop_id}")
+                )
+                print(f"✅ New delivery created with ID={delivery.id}, shop_id={delivery.shop_id}")
                 
                 # Update checkout's shipping_fee to match
                 shop_checkouts = Checkout.objects.filter(
@@ -27156,7 +27127,6 @@ class SellerOrderList(viewsets.ViewSet):
                         "all_riders_compared": rider_comparison
                     }
                 }, status=status.HTTP_200_OK)
-
             
             elif action_type == 'ready_to_ship':
                 if is_pickup:
@@ -27660,7 +27630,7 @@ class SellerOrderList(viewsets.ViewSet):
                     order=order,
                     shop=shop
                 ).exclude(
-                    status__in=['cancelled', 'expired', 'rejected', 'declined']
+                    status__in=['cancelled', 'expired', 'rejected']
                 ).order_by(
                     Case(
                         When(status='accepted', then=Value(1)),
@@ -27668,6 +27638,7 @@ class SellerOrderList(viewsets.ViewSet):
                         When(status='in_progress', then=Value(3)),
                         When(status='delivered', then=Value(4)),
                         When(status='pending', then=Value(5)),
+                        When(status='declined', then=Value(6)),  
                         default=Value(6),
                         output_field=IntegerField(),
                     ),
@@ -40649,61 +40620,95 @@ class DisputeViewSet(viewsets.ModelViewSet):
                         )
                         
                     # Also update seller_deduction_amount and rider_deduction_amount if liability distribution provided
+                    # Also update seller_deduction_amount and rider_deduction_amount if liability distribution provided
                     if liability_distribution:
                         seller_pct = liability_distribution.get('seller', 0)
                         rider_pct = liability_distribution.get('rider', 0)
+                        
+                        # Get the shop and seller from the order
+                        shop = None
+                        seller_user = None
+                        
+                        if refund.order_id:
+                            # Get the first checkout to find the shop
+                            checkout = refund.order_id.checkout_set.first()
+                            if checkout:
+                                if checkout.cart_item and checkout.cart_item.product and checkout.cart_item.product.shop:
+                                    shop = checkout.cart_item.product.shop
+                                    seller_user = shop.customer.customer if shop.customer else None
+                                elif hasattr(checkout, 'direct_shop_id') and checkout.direct_shop_id:
+                                    try:
+                                        shop = Shop.objects.get(id=checkout.direct_shop_id)
+                                        seller_user = shop.customer.customer if shop.customer else None
+                                    except Shop.DoesNotExist:
+                                        pass
                         
                         if seller_pct > 0 and adjusted_amount:
                             dispute.seller_deduction_amount = Decimal(str(adjusted_amount)) * Decimal(str(seller_pct)) / Decimal('100')
                             
                             # Deduct from Seller Wallet
-                            if refund.order_id and refund.order_id.shop:
-                                seller_user = refund.order_id.shop.seller
+                            if seller_user:
                                 seller_wallet, _ = UserWallet.objects.get_or_create(user=seller_user)
+                                deduction_amount = dispute.seller_deduction_amount
                                 
-                                deduction = dispute.seller_deduction_amount
-                                if seller_wallet.pending_balance >= deduction:
-                                    seller_wallet.pending_balance -= deduction
+                                # Deduct from pending_balance first, then available_balance
+                                if seller_wallet.pending_balance >= deduction_amount:
+                                    seller_wallet.pending_balance -= deduction_amount
                                 else:
-                                    remaining = deduction - seller_wallet.pending_balance
+                                    remaining = deduction_amount - seller_wallet.pending_balance
                                     seller_wallet.pending_balance = 0
-                                    seller_wallet.available_balance -= remaining
-                                    
+                                    if seller_wallet.available_balance >= remaining:
+                                        seller_wallet.available_balance -= remaining
+                                    else:
+                                        seller_wallet.available_balance = 0
+                                
                                 seller_wallet.save()
-
                                 
                                 WalletTransaction.objects.create(
                                     wallet=seller_wallet,
                                     user=seller_user,
-                                    amount=dispute.seller_deduction_amount,
+                                    amount=deduction_amount,
+                                    transaction_type='debit',
+                                    source_type='dispute',
+                                    status='completed',
+                                    order=refund.order_id,
+                                    shop=shop
+                                )
+                                print(f"✅ Deducted ₱{deduction_amount} from seller {seller_user.username}'s wallet")
+
+                        if rider_pct > 0 and adjusted_amount:
+                            dispute.rider_deduction_amount = Decimal(str(adjusted_amount)) * Decimal(str(rider_pct)) / Decimal('100')
+                            
+                            # Get rider from delivery
+                            rider_user = None
+                            if refund.order_id:
+                                delivery = Delivery.objects.filter(order=refund.order_id).first()
+                                if delivery and delivery.rider and delivery.rider.rider:
+                                    rider_user = delivery.rider.rider
+                            
+                            # Deduct from Rider Wallet
+                            if rider_user:
+                                rider_wallet, _ = UserWallet.objects.get_or_create(user=rider_user)
+                                deduction_amount = dispute.rider_deduction_amount
+                                
+                                # Deduct from available_balance (riders typically don't have pending balance)
+                                if rider_wallet.available_balance >= deduction_amount:
+                                    rider_wallet.available_balance -= deduction_amount
+                                else:
+                                    rider_wallet.available_balance = 0
+                                
+                                rider_wallet.save()
+                                
+                                WalletTransaction.objects.create(
+                                    wallet=rider_wallet,
+                                    user=rider_user,
+                                    amount=deduction_amount,
                                     transaction_type='debit',
                                     source_type='dispute',
                                     status='completed',
                                     order=refund.order_id
                                 )
-
-                        if rider_pct > 0 and adjusted_amount:
-                            dispute.rider_deduction_amount = Decimal(str(adjusted_amount)) * Decimal(str(rider_pct)) / Decimal('100')
-                            
-                            # Deduct from Rider Wallet
-                            if refund.order_id:
-                                from .models import Delivery
-                                delivery = Delivery.objects.filter(order=refund.order_id).first()
-                                if delivery and delivery.rider and delivery.rider.user:
-                                    rider_user = delivery.rider.user
-                                    rider_wallet, _ = UserWallet.objects.get_or_create(user=rider_user)
-                                    rider_wallet.available_balance -= dispute.rider_deduction_amount
-                                    rider_wallet.save()
-                                    
-                                    WalletTransaction.objects.create(
-                                        wallet=rider_wallet,
-                                        user=rider_user,
-                                        amount=dispute.rider_deduction_amount,
-                                        transaction_type='debit',
-                                        source_type='dispute',
-                                        status='completed',
-                                        order=refund.order_id
-                                    )
+                                print(f"✅ Deducted ₱{deduction_amount} from rider {rider_user.username}'s wallet")
 
                         dispute.save(update_fields=['seller_deduction_amount', 'rider_deduction_amount'])
                     
@@ -52361,10 +52366,13 @@ class UserWalletViewSet(viewsets.ModelViewSet):
     # ================================================================
     def _release_expired_pending_transactions(self, user_wallet):
         """
-        Release pending transactions where order.refund_expire_date has passed.
+        Release pending transactions when:
+        1. order.refund_expire_date has passed, OR
+        2. OrderShopStatus.status = 'completed' AND OrderShopStatus.refund_status = 'expired'
         Called before withdrawal request to check available balance.
         """
         from datetime import datetime, date
+        from api.models import OrderShopStatus
         
         today = timezone.now()
         released_amount = Decimal('0')
@@ -52380,22 +52388,38 @@ class UserWalletViewSet(viewsets.ModelViewSet):
         for pending_tx in expired_pending:
             should_release = False
             
-            # Check if there's an associated order with refund_expire_date
-            if pending_tx.order and pending_tx.order.refund_expire_date:
-                # Release if refund_expire_date has passed
-                if today > pending_tx.order.refund_expire_date:
-                    should_release = True
-            elif pending_tx.order and pending_tx.order.completed_at:
-                # FIX: Handle date vs datetime properly
-                completed_at = pending_tx.order.completed_at
-                if isinstance(completed_at, date) and not isinstance(completed_at, datetime):
-                    # Convert date to datetime at end of day
-                    completed_at = datetime.combine(completed_at, datetime.max.time())
-                    completed_at = timezone.make_aware(completed_at) if timezone.is_naive(completed_at) else completed_at
+            # Check if there's an associated order
+            if pending_tx.order:
+                # Check if there's a matching OrderShopStatus with completed + expired refund
+                if pending_tx.shop:
+                    shop_status = OrderShopStatus.objects.filter(
+                        order=pending_tx.order,
+                        shop=pending_tx.shop,
+                        status='completed',
+                        refund_status='expired'
+                    ).first()
+                    
+                    if shop_status:
+                        should_release = True
                 
-                # Release if completed_at is older than 1 day
-                if (today - completed_at).days >= 1:
-                    should_release = True
+                # Fallback: Check if there's an associated order with refund_expire_date
+                if not should_release and pending_tx.order.refund_expire_date:
+                    # Release if refund_expire_date has passed
+                    if today > pending_tx.order.refund_expire_date:
+                        should_release = True
+                
+                # Fallback: Check completed_at timestamp (1 day hold)
+                if not should_release and pending_tx.order.completed_at:
+                    # FIX: Handle date vs datetime properly
+                    completed_at = pending_tx.order.completed_at
+                    if isinstance(completed_at, date) and not isinstance(completed_at, datetime):
+                        # Convert date to datetime at end of day
+                        completed_at = datetime.combine(completed_at, datetime.max.time())
+                        completed_at = timezone.make_aware(completed_at) if timezone.is_naive(completed_at) else completed_at
+                    
+                    # Release if completed_at is older than 1 day
+                    if (today - completed_at).days >= 1:
+                        should_release = True
             else:
                 # No order reference, don't release automatically
                 continue
@@ -52415,7 +52439,7 @@ class UserWalletViewSet(viewsets.ModelViewSet):
                     user_wallet.available_balance += pending_tx.amount
                     released_amount += pending_tx.amount
                     
-                    logger.info(f"Released pending transaction {pending_tx.transaction_id} after refund_expire_date passed")
+                    logger.info(f"Released pending transaction {pending_tx.transaction_id} - OrderShopStatus completed with expired refund")
         
         if released_amount > 0:
             user_wallet.save()

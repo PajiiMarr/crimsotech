@@ -593,16 +593,36 @@ export default function SellerViewOrder() {
 
   const renderStatusCard = () => {
     if (!order) return null;
-
+  
     let displayStatus = order.status;
     let customDescription = "";
     let customLabel = "";
     let customIcon = undefined;
-
+  
     const shopStatus = order?.shop_status?.toLowerCase() || "";
-
+  
+    // Check if order is partially confirmed
+    if (order.status === "partially_confirmed") {
+      const remainingShops =
+        (order.total_shops_in_order || 0) - (order.confirmed_shops_count || 0);
+      customLabel = `Waiting for ${remainingShops} Other Shop(s) to Confirm`;
+      customDescription = `Your shop has confirmed this order. The order will start processing once all ${order.total_shops_in_order} shop(s) have confirmed.`;
+      customIcon = "time-outline";
+      displayStatus = "partially_confirmed";
+    }
+    // Check if delivery is declined (priority check)
+    else if (
+      (displayStatus === "rider_assigned" || shopStatus === "rider_assigned") &&
+      order?.delivery_info?.status === "declined"
+    ) {
+      customLabel = "Rider Assigned - Declined";
+      customDescription =
+        'The assigned rider has declined this delivery. Click "Go back to arrange shipment" to assign a new rider.';
+      customIcon = "close-circle-outline";
+      displayStatus = "declined";
+    }
     // Check if order is shipped and delivered
-    if (
+    else if (
       shopStatus === "shipped" &&
       order?.delivery_info?.status === "delivered"
     ) {
@@ -618,22 +638,13 @@ export default function SellerViewOrder() {
       customIcon = "car-outline";
       displayStatus = "to_deliver";
     }
-    // Check if shop_status is waiting_for_rider - display as "Waiting for Pickup"
+    // Check if shop_status is waiting_for_rider
     else if (shopStatus === "waiting_for_rider") {
       customLabel = "Waiting for Pickup";
       customDescription =
         "Order is ready. Waiting for rider to pick up the item from your store.";
       customIcon = "package-outline";
       displayStatus = "waiting_for_rider";
-    }
-    // Check if order is partially confirmed
-    else if (order.status === "partially_confirmed") {
-      const remainingShops =
-        (order.total_shops_in_order || 0) - (order.confirmed_shops_count || 0);
-      customLabel = `Waiting for ${remainingShops} Other Shop(s) to Confirm`;
-      customDescription = `Your shop has confirmed this order. The order will start processing once all ${order.total_shops_in_order} shop(s) have confirmed.`;
-      customIcon = "time-outline";
-      displayStatus = "partially_confirmed";
     }
     // Check if rider declined
     else if (order?.delivery_info?.status === "declined") {
@@ -695,28 +706,28 @@ export default function SellerViewOrder() {
       customDescription =
         "Order is ready at your store. Customer has been notified.";
       customIcon = "storefront-outline";
-
+  
       const pickupCode = order?.metadata?.pickup_code;
       if (pickupCode) {
         customDescription = `Order is ready at your store. Customer has been notified.\n\nPickup Code: ${pickupCode}`;
       }
     }
-
+  
     const config = getStatusConfig(
       displayStatus,
       order.shop_status,
       order.total_shops_in_order,
       order.confirmed_shops_count,
     );
-
+  
     const finalLabel = customLabel || config.label;
     const finalDescription = customDescription || config.description;
     const finalIcon = customIcon || config.icon;
     const finalColor = config.color;
     const finalBgColor = config.bgColor;
-
+  
     const isPartiallyConfirmed = displayStatus === "partially_confirmed";
-
+  
     return (
       <View
         style={[
@@ -756,7 +767,6 @@ export default function SellerViewOrder() {
       </View>
     );
   };
-
   const renderRiderInfo = () => {
     const riderName = order?.delivery_info?.rider_name;
     const riderPhone = order?.delivery_info?.rider_phone;
@@ -1105,9 +1115,9 @@ export default function SellerViewOrder() {
     const isCancelled = order?.status === "cancelled";
     const isPartiallyConfirmed = order?.status === "partially_confirmed";
     const isShopConfirmed = order?.shop_status === "confirmed";
-
+  
     if (isCompleted || isCancelled) return null;
-
+  
     const {
       showConfirm,
       showCancel,
@@ -1119,7 +1129,7 @@ export default function SellerViewOrder() {
       showDelivered,
       showComplete,
     } = getActionButtons();
-
+  
     const showPrintWaybill = availableActions.includes("print_waybill");
     const currentStatus = order?.status?.toLowerCase() || "";
     const shopStatus = order?.shop_status?.toLowerCase() || "";
@@ -1128,7 +1138,30 @@ export default function SellerViewOrder() {
     const isReadyToShip = currentStatus === "ready_to_ship";
     const isPickup = isPickupOrder();
     const isRiderDeclined = order?.delivery_info?.status === "declined";
-
+  
+    // NEW: For declined status, only show the arrange shipment button
+    if (isRiderDeclined) {
+      return (
+        <View style={styles.stickyFooter}>
+          <View style={styles.buttonContainer}>
+            <TouchableOpacity
+              style={[styles.actionButton, styles.readyToShipButton]}
+              onPress={() =>
+                showActionConfirmation(
+                  "arrange_shipment",
+                  "Proceed to Arrange Shipment",
+                  "The previous rider declined this delivery. Would you like to assign a new rider?",
+                )
+              }
+              disabled={processing}
+            >
+              <Text style={styles.actionButtonText}>Proceed to Arrange Shipment</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      );
+    }
+  
     const hasAnyAction =
       showConfirm ||
       showCancel ||
@@ -1140,9 +1173,9 @@ export default function SellerViewOrder() {
       showDelivered ||
       showComplete ||
       showPrintWaybill;
-
+  
     if (!hasAnyAction) return null;
-
+  
     const handlePrintWaybill = async () => {
       try {
         setProcessing(true);
@@ -1160,10 +1193,10 @@ export default function SellerViewOrder() {
         setProcessing(false);
       }
     };
-
+  
     const isRiderAccepted = order?.delivery_info?.status === "accepted";
     const isWaitingForRider = currentStatus === "waiting_for_rider";
-
+  
     return (
       <View style={styles.stickyFooter}>
         <View style={styles.buttonContainer}>
@@ -1179,7 +1212,7 @@ export default function SellerViewOrder() {
                 <Text style={styles.actionButtonText}>Print Waybill</Text>
               </TouchableOpacity>
             )}
-
+  
           {showConfirm && (
             <TouchableOpacity
               style={[styles.actionButton, styles.confirmButton]}
@@ -1201,10 +1234,9 @@ export default function SellerViewOrder() {
               </Text>
             </TouchableOpacity>
           )}
-
+  
           {((isProcessing && showArrangeShipment) ||
-            currentStatus === "pending_rider" ||
-            isRiderDeclined) &&
+            currentStatus === "pending_rider") &&
             !isPickup && (
               <TouchableOpacity
                 style={[styles.actionButton, styles.readyToShipButton]}
@@ -1212,21 +1244,15 @@ export default function SellerViewOrder() {
                   showActionConfirmation(
                     "arrange_shipment",
                     "Arrange Shipment",
-                    isRiderDeclined
-                      ? "The previous rider declined. Assign a new rider for this delivery?"
-                      : "Assign riders for this delivery? Nearby riders will be notified.",
+                    "Assign riders for this delivery? Nearby riders will be notified.",
                   )
                 }
                 disabled={processing}
               >
-                <Text style={styles.actionButtonText}>
-                  {isRiderDeclined
-                    ? "Arrange Shipment Again"
-                    : "Arrange Shipment"}
-                </Text>
+                <Text style={styles.actionButtonText}>Arrange Shipment</Text>
               </TouchableOpacity>
             )}
-
+  
           {(currentStatus === "rider_accepted" ||
             (currentStatus === "rider_assigned" && isRiderAccepted)) &&
             showReadyToShip &&
@@ -1247,7 +1273,7 @@ export default function SellerViewOrder() {
                 <Text style={styles.actionButtonText}>Ready to Ship</Text>
               </TouchableOpacity>
             )}
-
+  
           {isReadyToShip && showReadyToShip && !isPickup && (
             <TouchableOpacity
               style={[styles.actionButton, styles.readyToShipButton]}
@@ -1263,13 +1289,12 @@ export default function SellerViewOrder() {
               <Text style={styles.actionButtonText}>Ready to Ship</Text>
             </TouchableOpacity>
           )}
-
+  
           {!isProcessing &&
             !isReadyToShip &&
             !isWaitingForRider &&
             showArrangeShipment &&
-            !isPickup &&
-            !isRiderDeclined && (
+            !isPickup && (
               <TouchableOpacity
                 style={[styles.actionButton, styles.readyToShipButton]}
                 onPress={() =>
@@ -1284,7 +1309,7 @@ export default function SellerViewOrder() {
                 <Text style={styles.actionButtonText}>Arrange Shipment</Text>
               </TouchableOpacity>
             )}
-
+  
           {showToDeliver && !isPickup && shopStatus !== "shipped" && (
             <TouchableOpacity
               style={[styles.actionButton, { backgroundColor: "#8B5CF6" }]}
@@ -1300,7 +1325,7 @@ export default function SellerViewOrder() {
               <Text style={styles.actionButtonText}>Out for Delivery</Text>
             </TouchableOpacity>
           )}
-
+  
           {showReadyForPickup && isPickup && (
             <TouchableOpacity
               style={[styles.actionButton, styles.readyToShipButton]}
@@ -1316,7 +1341,7 @@ export default function SellerViewOrder() {
               <Text style={styles.actionButtonText}>Ready for Pickup</Text>
             </TouchableOpacity>
           )}
-
+  
           {showPickedUp && isPickup && (
             <TouchableOpacity
               style={[styles.actionButton, styles.confirmButton]}
@@ -1332,7 +1357,7 @@ export default function SellerViewOrder() {
               <Text style={styles.actionButtonText}>Mark Picked Up</Text>
             </TouchableOpacity>
           )}
-
+  
           {showCancel && (
             <TouchableOpacity
               style={[styles.actionButton, styles.cancelButton]}
