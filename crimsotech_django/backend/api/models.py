@@ -2676,6 +2676,16 @@ class OrderShopStatus(models.Model):
         ('completed', 'Completed'),
         ('cancelled', 'Cancelled'),
     ]
+
+    refund_status = models.CharField(
+        max_length=20,
+        choices=[
+            ('active', 'Active'),
+            ('expired', 'Expired'),
+            ('completed', 'Completed'),
+        ],
+        default='active'
+    )
     
     # Remove the UUID id field - Django will use AutoField automatically
     # DO NOT declare id field at all
