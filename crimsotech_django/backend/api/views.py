@@ -40513,61 +40513,95 @@ class DisputeViewSet(viewsets.ModelViewSet):
                         )
                         
                     # Also update seller_deduction_amount and rider_deduction_amount if liability distribution provided
+                    # Also update seller_deduction_amount and rider_deduction_amount if liability distribution provided
                     if liability_distribution:
                         seller_pct = liability_distribution.get('seller', 0)
                         rider_pct = liability_distribution.get('rider', 0)
+                        
+                        # Get the shop and seller from the order
+                        shop = None
+                        seller_user = None
+                        
+                        if refund.order_id:
+                            # Get the first checkout to find the shop
+                            checkout = refund.order_id.checkout_set.first()
+                            if checkout:
+                                if checkout.cart_item and checkout.cart_item.product and checkout.cart_item.product.shop:
+                                    shop = checkout.cart_item.product.shop
+                                    seller_user = shop.customer.customer if shop.customer else None
+                                elif hasattr(checkout, 'direct_shop_id') and checkout.direct_shop_id:
+                                    try:
+                                        shop = Shop.objects.get(id=checkout.direct_shop_id)
+                                        seller_user = shop.customer.customer if shop.customer else None
+                                    except Shop.DoesNotExist:
+                                        pass
                         
                         if seller_pct > 0 and adjusted_amount:
                             dispute.seller_deduction_amount = Decimal(str(adjusted_amount)) * Decimal(str(seller_pct)) / Decimal('100')
                             
                             # Deduct from Seller Wallet
-                            if refund.order_id and refund.order_id.shop:
-                                seller_user = refund.order_id.shop.seller
+                            if seller_user:
                                 seller_wallet, _ = UserWallet.objects.get_or_create(user=seller_user)
+                                deduction_amount = dispute.seller_deduction_amount
                                 
-                                deduction = dispute.seller_deduction_amount
-                                if seller_wallet.pending_balance >= deduction:
-                                    seller_wallet.pending_balance -= deduction
+                                # Deduct from pending_balance first, then available_balance
+                                if seller_wallet.pending_balance >= deduction_amount:
+                                    seller_wallet.pending_balance -= deduction_amount
                                 else:
-                                    remaining = deduction - seller_wallet.pending_balance
+                                    remaining = deduction_amount - seller_wallet.pending_balance
                                     seller_wallet.pending_balance = 0
-                                    seller_wallet.available_balance -= remaining
-                                    
+                                    if seller_wallet.available_balance >= remaining:
+                                        seller_wallet.available_balance -= remaining
+                                    else:
+                                        seller_wallet.available_balance = 0
+                                
                                 seller_wallet.save()
-
                                 
                                 WalletTransaction.objects.create(
                                     wallet=seller_wallet,
                                     user=seller_user,
-                                    amount=dispute.seller_deduction_amount,
+                                    amount=deduction_amount,
+                                    transaction_type='debit',
+                                    source_type='dispute',
+                                    status='completed',
+                                    order=refund.order_id,
+                                    shop=shop
+                                )
+                                print(f"✅ Deducted ₱{deduction_amount} from seller {seller_user.username}'s wallet")
+
+                        if rider_pct > 0 and adjusted_amount:
+                            dispute.rider_deduction_amount = Decimal(str(adjusted_amount)) * Decimal(str(rider_pct)) / Decimal('100')
+                            
+                            # Get rider from delivery
+                            rider_user = None
+                            if refund.order_id:
+                                delivery = Delivery.objects.filter(order=refund.order_id).first()
+                                if delivery and delivery.rider and delivery.rider.rider:
+                                    rider_user = delivery.rider.rider
+                            
+                            # Deduct from Rider Wallet
+                            if rider_user:
+                                rider_wallet, _ = UserWallet.objects.get_or_create(user=rider_user)
+                                deduction_amount = dispute.rider_deduction_amount
+                                
+                                # Deduct from available_balance (riders typically don't have pending balance)
+                                if rider_wallet.available_balance >= deduction_amount:
+                                    rider_wallet.available_balance -= deduction_amount
+                                else:
+                                    rider_wallet.available_balance = 0
+                                
+                                rider_wallet.save()
+                                
+                                WalletTransaction.objects.create(
+                                    wallet=rider_wallet,
+                                    user=rider_user,
+                                    amount=deduction_amount,
                                     transaction_type='debit',
                                     source_type='dispute',
                                     status='completed',
                                     order=refund.order_id
                                 )
-
-                        if rider_pct > 0 and adjusted_amount:
-                            dispute.rider_deduction_amount = Decimal(str(adjusted_amount)) * Decimal(str(rider_pct)) / Decimal('100')
-                            
-                            # Deduct from Rider Wallet
-                            if refund.order_id:
-                                from .models import Delivery
-                                delivery = Delivery.objects.filter(order=refund.order_id).first()
-                                if delivery and delivery.rider and delivery.rider.user:
-                                    rider_user = delivery.rider.user
-                                    rider_wallet, _ = UserWallet.objects.get_or_create(user=rider_user)
-                                    rider_wallet.available_balance -= dispute.rider_deduction_amount
-                                    rider_wallet.save()
-                                    
-                                    WalletTransaction.objects.create(
-                                        wallet=rider_wallet,
-                                        user=rider_user,
-                                        amount=dispute.rider_deduction_amount,
-                                        transaction_type='debit',
-                                        source_type='dispute',
-                                        status='completed',
-                                        order=refund.order_id
-                                    )
+                                print(f"✅ Deducted ₱{deduction_amount} from rider {rider_user.username}'s wallet")
 
                         dispute.save(update_fields=['seller_deduction_amount', 'rider_deduction_amount'])
                     
