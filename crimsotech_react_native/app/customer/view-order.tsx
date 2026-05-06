@@ -1973,22 +1973,19 @@ export default function ViewTrackOrderPage() {
           if (String(order?.status || "").toLowerCase() === "pending") {
             return (
               <View style={baseStyle}>
-                <View>
+                <View style={{ flex: 1 }}>
                   <View style={styles.statusRow}>
                     <Ionicons
                       name="time"
                       size={18}
                       color={order.status_color}
                     />
-                    <Text
-                      style={[styles.statusText, { color: order.status_color }]}
-                    >
+                    <Text style={[styles.statusText, { color: order.status_color }]}>
                       {getStatusText(order)}
                     </Text>
                   </View>
                   <Text style={styles.subStatusText}>
-                    Awaiting confirmation from the seller. We will notify you
-                    once processing starts.
+                    Awaiting confirmation from the seller. We will notify you once processing starts.
                   </Text>
                 </View>
               </View>
@@ -2984,8 +2981,10 @@ export default function ViewTrackOrderPage() {
           </View>
         </View>
       </ScrollView>
+      
       {/* Sticky Action Buttons */}
       {(() => {
+        
         const currentShopStatus =
           isFilteringByShop && filterShopId
             ? orderData?.order?.shop_statuses?.[filterShopId as string]
@@ -3007,7 +3006,25 @@ export default function ViewTrackOrderPage() {
             orderStatusLower === "picked_up" ||
             orderStatusLower === "partially_delivered");
 
-        const showCancelForOrder = !isFilteringByShop && actions.can_cancel;
+            const showCancelForOrder = !isFilteringByShop && actions.can_cancel;
+            const showCancelPendingOrder = orderStatusLower === "pending";
+        
+            // DEBUG LOGS
+            console.log("=== CANCEL BUTTON DEBUG ===");
+            console.log("orderStatusLower:", orderStatusLower);
+            console.log("actions.can_cancel:", actions.can_cancel);
+            console.log("isFilteringByShop:", isFilteringByShop);
+            console.log("showCancelForOrder:", showCancelForOrder);
+            console.log("showCancelPendingOrder:", showCancelPendingOrder);
+            console.log("order?.status:", order?.status);
+            console.log("currentItems count:", currentItems.length);
+            console.log("===========================");
+
+        const hasPendingItems = currentItems.some(
+          (item) => item.shop_status === "pending",
+        );
+        const showCancelPendingItems =
+          !isFilteringByShop && hasPendingItems && !actions.can_cancel;
 
         const showRefundRateForOrder =
           !isFilteringByShop &&
@@ -3016,28 +3033,49 @@ export default function ViewTrackOrderPage() {
             orderStatusLower === "completed") &&
           (actions.can_review || actions.can_return);
 
-        if (
-          !showCancelForOrder &&
-          !showOrderReceivedForOrder &&
-          !showRefundRateForOrder &&
-          !showOrderReceivedForShop &&
-          !showCompletedActionsForShop
-        ) {
-          return null;
-        }
+          if (
+            !showCancelForOrder &&
+            !showCancelPendingOrder &&
+            !showCancelPendingItems &&
+            !showOrderReceivedForOrder &&
+            !showRefundRateForOrder &&
+            !showOrderReceivedForShop &&
+            !showCompletedActionsForShop
+          ) {
+            console.log("⚠️ FOOTER NOT RENDERING - All show flags are false");
+            return null;
+          }
+
+          console.log("✅ FOOTER WILL RENDER");
+          console.log("showCancelForOrder:", showCancelForOrder);
+          console.log("showCancelPendingOrder:", showCancelPendingOrder);
 
         return (
           <View style={styles.stickyFooter}>
             <View style={styles.actionButtonsContainer}>
               {showCancelForOrder && (
-                <TouchableOpacity
-                  style={styles.cancelOrderButton}
-                  onPress={handleCancelOrder}
-                >
-                  <Text style={styles.cancelOrderButtonText}>Cancel Order</Text>
-                </TouchableOpacity>
+                <>
+                  {console.log("🟢 RENDERING showCancelForOrder button")}
+                  <TouchableOpacity
+                    style={styles.cancelOrderButton}
+                    onPress={handleCancelOrder}
+                  >
+                    <Text style={styles.cancelOrderButtonText}>Cancel Order</Text>
+                  </TouchableOpacity>
+                </>
               )}
 
+              {showCancelPendingOrder && (
+                <>
+                  {console.log("🟢 RENDERING showCancelPendingOrder button")}
+                  <TouchableOpacity
+                    style={styles.cancelOrderButton}
+                    onPress={handleCancelOrder}
+                  >
+                    <Text style={styles.cancelOrderButtonText}>Cancel Order</Text>
+                  </TouchableOpacity>
+                </>
+              )}
               {showOrderReceivedForShop && (
                 <TouchableOpacity
                   style={styles.orderReceivedButton}
@@ -4258,5 +4296,21 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "500",
     color: "#3B82F6",
+  },
+  pendingCancelButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#EF4444",
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+    marginTop: 12,
+    gap: 6,
+  },
+  pendingCancelButtonText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#FFFFFF",
   },
 });
