@@ -26007,7 +26007,8 @@ class SellerOrderList(viewsets.ViewSet):
                             delivery = d
                             break
                 
-                if delivery:
+                # IMPORTANT: Only use non-cancelled deliveries to update checkout status
+                if delivery and delivery.status != 'cancelled':
                     # Get all checkouts for this shop
                     shop_checkouts = Checkout.objects.filter(
                         Q(order=order, cart_item__product__shop=shop) |
@@ -26663,6 +26664,7 @@ class SellerOrderList(viewsets.ViewSet):
                     return Response({"success": False, "message": "Order cannot be cancelled at this stage"}, status=status.HTTP_400_BAD_REQUEST)
                 
                 # Special handling for rider_assigned status - revert to processing (cancel shipment)
+                # Special handling for rider_assigned status - revert to processing (cancel shipment)
                 if shop_status.status == 'rider_assigned':
                     # Cancel the delivery that was assigned
                     delivery = Delivery.objects.filter(order=order, shop=shop).order_by('-created_at').first()
@@ -26670,6 +26672,17 @@ class SellerOrderList(viewsets.ViewSet):
                         delivery.status = 'cancelled'
                         delivery.save()
                         print(f"✅ Cancelled delivery {delivery.id} for order {order.order}")
+                    
+                    # Reset checkout statuses back to pending for this shop
+                    shop_checkouts = Checkout.objects.filter(
+                        Q(order=order, cart_item__product__shop=shop) |
+                        Q(order=order, direct_shop_id=str(shop.id))
+                    )
+                    for checkout in shop_checkouts:
+                        if checkout.status != 'cancelled':
+                            checkout.status = 'pending'
+                            checkout.save(update_fields=['status'])
+                            print(f"✅ Reset checkout {checkout.id} status to pending")
                     
                     # Revert status back to processing
                     shop_status.status = 'processing'
@@ -27073,6 +27086,7 @@ class SellerOrderList(viewsets.ViewSet):
             proof_images = []
             
             try:
+                # Important: Exclude cancelled deliveries from being shown
                 active_delivery = Delivery.objects.filter(
                     order=order,
                     shop=shop
@@ -27090,9 +27104,16 @@ class SellerOrderList(viewsets.ViewSet):
                     ),
                     '-created_at'
                 ).select_related('rider__rider').first()
-                
+
+                # CRITICAL FIX: Only fetch the most recent delivery as fallback, but ensure it's not cancelled
                 if not active_delivery:
-                    active_delivery = Delivery.objects.filter(order=order, shop=shop).order_by('-created_at').first()
+                    # Get the most recent non-cancelled delivery
+                    active_delivery = Delivery.objects.filter(
+                        order=order, 
+                        shop=shop
+                    ).exclude(
+                        status__in=['cancelled', 'expired', 'rejected', 'declined']
+                    ).order_by('-created_at').first()
                 
                 if active_delivery:
                     is_accepted = active_delivery.status in ['accepted', 'picked_up', 'in_progress', 'delivered']
@@ -29509,6 +29530,52 @@ class ShippingAddressViewSet(viewsets.ViewSet):  # Renamed to avoid conflict
             ) 
 
 class PurchasesBuyer(viewsets.ViewSet):
+    @action(detail=True, methods=['post'], url_path='close-refund')
+    def close_refund(self, request, pk=None):
+        """Customer closes/expires the refund for a shop's order"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({'error': 'X-User-Id header is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = User.objects.get(id=user_id)
+            order = Order.objects.get(order=pk, user=user)
+        except User.DoesNotExist:
+            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Order.DoesNotExist:
+            return Response({'error': 'Order not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        shop_id = request.data.get('shop_id')
+        if not shop_id:
+            return Response({'error': 'shop_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            shop = Shop.objects.get(id=shop_id)
+        except Shop.DoesNotExist:
+            return Response({'error': 'Shop not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            # Get the OrderShopStatus for this order and shop
+            order_shop_status = OrderShopStatus.objects.get(order=order, shop=shop)
+            
+            # Update refund_status to 'expired'
+            order_shop_status.refund_status = 'expired'
+            order_shop_status.save(update_fields=['refund_status'])
+            
+            logger.info(f"Refund closed (expired) for order {order.order} - shop {shop.name}")
+            
+            return Response({
+                'success': True,
+                'message': 'Refund request has been closed successfully',
+                'refund_status': order_shop_status.refund_status
+            }, status=status.HTTP_200_OK)
+            
+        except OrderShopStatus.DoesNotExist:
+            return Response({'error': 'Order shop status not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logger.exception('Error closing refund: %s', e)
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
     def _auto_complete_if_needed(self, order):
         """Auto-complete order if picked_up or delivered for 24+ hours"""
         from django.utils import timezone
@@ -30564,7 +30631,8 @@ class PurchasesBuyer(viewsets.ViewSet):
                     'shop_statuses': {
                         str(oss.shop.id): {
                             'status': oss.status,
-                            'refund_expire_date': oss.refund_expire_date.isoformat() if oss.refund_expire_date else None
+                            'refund_expire_date': oss.refund_expire_date.isoformat() if oss.refund_expire_date else None,
+                            'refund_status': oss.refund_status 
                         }
                         for oss in OrderShopStatus.objects.filter(order=order)
                     },
