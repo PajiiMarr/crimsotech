@@ -116,8 +116,10 @@ interface OrderDetails {
   };
   status: string;
   total_amount: number;
+  subtotal?: number;
   shipping_fee?: number;
   transaction_fee?: number;
+  discount_applied?: number; // ADD THIS LINE
   total_vat?: number;
   payment_method: string | null;
   delivery_method: string | null;
@@ -1698,6 +1700,14 @@ export default function SellerViewOrder() {
                 </Text>
               </View>
             ) : null}
+            {/* Add discount row here - shows even when 0 */}
+            <View style={styles.summaryRow}>
+              <Text style={styles.summaryLabel}>Discount Applied</Text>
+              <Text style={[styles.summaryValue, { color: "#10B981" }]}>
+                -{formatCurrency(order.discount_applied || 0)}
+              </Text>
+            </View>
+            <View style={styles.dividerLight} />
             <View style={styles.dividerLight} />
             <View style={styles.totalSummaryRow}>
               <Text style={styles.totalSummaryLabel}>Total</Text>

@@ -26942,18 +26942,26 @@ class SellerOrderList(viewsets.ViewSet):
             shop_total_vat = Decimal('0.00')
             shop_total_shipping_fee = Decimal('0.00')
             shop_grand_total = Decimal('0.00')
+            shop_discount_applied = Decimal('0.00')
             
             for checkout in checkouts:
+                # Accumulate discount_applied from checkout
+                if checkout.discount_applied:
+                    shop_discount_applied += Decimal(str(checkout.discount_applied))
+                
+                # CRITICAL FIX: Use checkout.total_amount directly
+                # This already includes product price + VAT + shipping fee adjustments
+                shop_grand_total += Decimal(str(checkout.total_amount))
+                
                 if checkout.direct_product_id and not checkout.cart_item:
-                    # Direct product checkout (no cart item)
                     price = Decimal(str(checkout.direct_product_price or 0))
                     item_subtotal = price * checkout.quantity
+                    
+                    # Get shipping_fee directly from checkout
                     shipping_fee = Decimal(str(getattr(checkout, 'shipping_fee', 0)))
-                    item_total = item_subtotal + shipping_fee
                     
                     shop_subtotal += item_subtotal
                     shop_total_shipping_fee += shipping_fee
-                    shop_grand_total += item_total
                     
                     items.append({
                         'id': str(checkout.id),
@@ -26973,11 +26981,12 @@ class SellerOrderList(viewsets.ViewSet):
                         },
                         'quantity': checkout.quantity,
                         'subtotal': float(item_subtotal),
-                        'total_amount': float(item_total),
+                        'total_amount': float(checkout.total_amount),  # Use actual checkout.total_amount
                         'status': checkout.status if hasattr(checkout, 'status') else 'pending',
                         'shipping_fee': float(shipping_fee),
                         'distance_km': getattr(checkout, 'distance_km', None),
-                        'value_added_tax_amount': None
+                        'value_added_tax_amount': None,
+                        'discount_applied': float(checkout.discount_applied) if checkout.discount_applied else 0
                     })
                     continue
                 
@@ -26997,22 +27006,17 @@ class SellerOrderList(viewsets.ViewSet):
                     except Exception as e:
                         print(f"Error getting variant image: {e}")
                 
-                # Calculate item subtotal (price * quantity)
                 item_subtotal = price * checkout.quantity
                 
-                # Get VAT amount from variant's value_added_tax_amount field
                 value_added_tax_amount = None
                 if variant and variant.value_added_tax_amount:
                     value_added_tax_amount = float(variant.value_added_tax_amount)
                     shop_total_vat += Decimal(str(value_added_tax_amount)) * checkout.quantity
                 
-                # Total amount = subtotal + shipping fee
                 shipping_fee = Decimal(str(getattr(checkout, 'shipping_fee', 0)))
-                item_total = item_subtotal + shipping_fee
                 
                 shop_subtotal += item_subtotal
                 shop_total_shipping_fee += shipping_fee
-                shop_grand_total += item_total
                 
                 product_data = {
                     "id": str(product.id),
@@ -27036,20 +27040,20 @@ class SellerOrderList(viewsets.ViewSet):
                     },
                     'quantity': checkout.quantity,
                     'subtotal': float(item_subtotal),
-                    'total_amount': float(item_total),
+                    'total_amount': float(checkout.total_amount),  # Use actual checkout.total_amount
                     'status': checkout.status if hasattr(checkout, 'status') else 'pending',
                     'shipping_fee': float(shipping_fee),
                     'distance_km': getattr(checkout, 'distance_km', None),
-                    'value_added_tax_amount': value_added_tax_amount
+                    'value_added_tax_amount': value_added_tax_amount,
+                    'discount_applied': float(checkout.discount_applied) if checkout.discount_applied else 0
                 })
             
-            # Calculate transaction fee pro-rated for this shop
-            transaction_fee = None
-            if order.transaction_fee and order.total_amount > 0:
-                global_total = sum(Decimal(str(c.total_amount)) for c in Checkout.objects.filter(order=order))
-                if global_total > 0:
-                    shop_transaction_fee = (Decimal(str(order.transaction_fee)) * shop_grand_total) / global_total
-                    transaction_fee = float(shop_transaction_fee)
+            # Get transaction_fee directly from checkout (NOT calculated)
+            shop_transaction_fee = None
+            for checkout in checkouts:
+                if hasattr(checkout, 'transaction_fee') and checkout.transaction_fee:
+                    shop_transaction_fee = float(checkout.transaction_fee)
+                    break
             
             # Count total shops in order and confirmed shops
             all_order_shop_statuses = OrderShopStatus.objects.filter(order=order)
@@ -27073,10 +27077,11 @@ class SellerOrderList(viewsets.ViewSet):
                         'contact_number': order.user.contact_number,
                     },
                     'status': self._get_shop_shipping_status(shop_status.status),
-                    'total_amount': float(shop_grand_total),
+                    'total_amount': float(shop_grand_total),  # Now using checkout.total_amount sum
                     'subtotal': float(shop_subtotal),
                     'shipping_fee': float(shop_total_shipping_fee),
-                    'transaction_fee': transaction_fee,
+                    'transaction_fee': shop_transaction_fee,
+                    'discount_applied': float(shop_discount_applied),
                     'total_vat': float(shop_total_vat),
                     'payment_method': order.payment_method,
                     'delivery_method': order.delivery_method,
@@ -27105,7 +27110,8 @@ class SellerOrderList(viewsets.ViewSet):
         except Order.DoesNotExist:
             return Response({'success': False, 'message': 'Order not found'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
-            return Response({'success': False, 'message': f'Error retrieving order: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)     
+            return Response({'success': False, 'message': f'Error retrieving order: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
 
 class CheckoutOrder(viewsets.ViewSet):
@@ -51528,12 +51534,13 @@ class UserWalletViewSet(viewsets.ModelViewSet):
     # ================================================================
     # RELEASE PENDING AFTER HOLD PERIOD
     # ================================================================
-
     def _release_expired_pending_transactions(self, user_wallet):
         """
         Release pending transactions where order.refund_expire_date has passed.
         Called before withdrawal request to check available balance.
         """
+        from datetime import datetime, date
+        
         today = timezone.now()
         released_amount = Decimal('0')
         
@@ -51554,11 +51561,10 @@ class UserWalletViewSet(viewsets.ModelViewSet):
                 if today > pending_tx.order.refund_expire_date:
                     should_release = True
             elif pending_tx.order and pending_tx.order.completed_at:
-                # FIX: Convert completed_at to datetime if it's a date
+                # FIX: Handle date vs datetime properly
                 completed_at = pending_tx.order.completed_at
-                if isinstance(completed_at, datetime.date) and not isinstance(completed_at, datetime.datetime):
+                if isinstance(completed_at, date) and not isinstance(completed_at, datetime):
                     # Convert date to datetime at end of day
-                    from datetime import datetime
                     completed_at = datetime.combine(completed_at, datetime.max.time())
                     completed_at = timezone.make_aware(completed_at) if timezone.is_naive(completed_at) else completed_at
                 
@@ -51590,8 +51596,7 @@ class UserWalletViewSet(viewsets.ModelViewSet):
             user_wallet.save()
             
         return released_amount
-
-        
+            
     # ================================================================
     # FIX WALLET - RESET AND RECALCULATE
     # ================================================================
