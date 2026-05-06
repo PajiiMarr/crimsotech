@@ -27625,7 +27625,6 @@ class SellerOrderList(viewsets.ViewSet):
             proof_images = []
             
             try:
-                # Important: Exclude cancelled deliveries from being shown
                 active_delivery = Delivery.objects.filter(
                     order=order,
                     shop=shop
@@ -27645,9 +27644,7 @@ class SellerOrderList(viewsets.ViewSet):
                     '-created_at'
                 ).select_related('rider__rider').first()
 
-                # CRITICAL FIX: Only fetch the most recent delivery as fallback, but ensure it's not cancelled
                 if not active_delivery:
-                    # Get the most recent non-cancelled delivery
                     active_delivery = Delivery.objects.filter(
                         order=order, 
                         shop=shop
@@ -27688,28 +27685,41 @@ class SellerOrderList(viewsets.ViewSet):
             items = []
             shop_subtotal = Decimal('0.00')
             shop_total_vat = Decimal('0.00')
-            shop_total_shipping_fee = Decimal('0.00')
             shop_grand_total = Decimal('0.00')
             shop_discount_applied = Decimal('0.00')
+            shop_total_transaction_fee = Decimal('0.00')  # Track total transaction fee
+            
+            # CRITICAL FIX: Get shipping fee ONCE per shop (not summing over checkouts)
+            shop_shipping_fee = Decimal('0.00')
+            
+            # Try to get from order.metadata first (most accurate)
+            if order.metadata and 'delivery_fees_by_shop' in order.metadata:
+                shop_shipping = order.metadata['delivery_fees_by_shop'].get(str(shop.id), 0)
+                if shop_shipping:
+                    shop_shipping_fee = Decimal(str(shop_shipping))
+            # Fallback to first checkout's shipping_fee
+            if shop_shipping_fee == 0 and checkouts.exists():
+                first_checkout = checkouts.first()
+                if hasattr(first_checkout, 'shipping_fee') and first_checkout.shipping_fee:
+                    shop_shipping_fee = Decimal(str(first_checkout.shipping_fee))
             
             for checkout in checkouts:
                 # Accumulate discount_applied from checkout
                 if checkout.discount_applied:
                     shop_discount_applied += Decimal(str(checkout.discount_applied))
                 
-                # CRITICAL FIX: Use checkout.total_amount directly
-                # This already includes product price + VAT + shipping fee adjustments
+                # Accumulate transaction_fee from checkout (this IS per-item, so sum is correct)
+                if checkout.transaction_fee:
+                    shop_total_transaction_fee += Decimal(str(checkout.transaction_fee))
+                
+                # Use checkout.total_amount directly for grand total
                 shop_grand_total += Decimal(str(checkout.total_amount))
                 
                 if checkout.direct_product_id and not checkout.cart_item:
                     price = Decimal(str(checkout.direct_product_price or 0))
                     item_subtotal = price * checkout.quantity
                     
-                    # Get shipping_fee directly from checkout
-                    shipping_fee = Decimal(str(getattr(checkout, 'shipping_fee', 0)))
-                    
                     shop_subtotal += item_subtotal
-                    shop_total_shipping_fee += shipping_fee
                     
                     items.append({
                         'id': str(checkout.id),
@@ -27729,9 +27739,10 @@ class SellerOrderList(viewsets.ViewSet):
                         },
                         'quantity': checkout.quantity,
                         'subtotal': float(item_subtotal),
-                        'total_amount': float(checkout.total_amount),  # Use actual checkout.total_amount
+                        'total_amount': float(checkout.total_amount),
                         'status': checkout.status if hasattr(checkout, 'status') else 'pending',
-                        'shipping_fee': float(shipping_fee),
+                        'shipping_fee': float(shop_shipping_fee),  # Same shipping fee for all items in this shop
+                        'transaction_fee': float(checkout.transaction_fee) if checkout.transaction_fee else 0,
                         'distance_km': getattr(checkout, 'distance_km', None),
                         'value_added_tax_amount': None,
                         'discount_applied': float(checkout.discount_applied) if checkout.discount_applied else 0
@@ -27761,10 +27772,7 @@ class SellerOrderList(viewsets.ViewSet):
                     value_added_tax_amount = float(variant.value_added_tax_amount)
                     shop_total_vat += Decimal(str(value_added_tax_amount)) * checkout.quantity
                 
-                shipping_fee = Decimal(str(getattr(checkout, 'shipping_fee', 0)))
-                
                 shop_subtotal += item_subtotal
-                shop_total_shipping_fee += shipping_fee
                 
                 product_data = {
                     "id": str(product.id),
@@ -27788,20 +27796,14 @@ class SellerOrderList(viewsets.ViewSet):
                     },
                     'quantity': checkout.quantity,
                     'subtotal': float(item_subtotal),
-                    'total_amount': float(checkout.total_amount),  # Use actual checkout.total_amount
+                    'total_amount': float(checkout.total_amount),
                     'status': checkout.status if hasattr(checkout, 'status') else 'pending',
-                    'shipping_fee': float(shipping_fee),
+                    'shipping_fee': float(shop_shipping_fee),  # Same shipping fee for all items in this shop
+                    'transaction_fee': float(checkout.transaction_fee) if checkout.transaction_fee else 0,
                     'distance_km': getattr(checkout, 'distance_km', None),
                     'value_added_tax_amount': value_added_tax_amount,
                     'discount_applied': float(checkout.discount_applied) if checkout.discount_applied else 0
                 })
-            
-            # Get transaction_fee directly from checkout (NOT calculated)
-            shop_transaction_fee = None
-            for checkout in checkouts:
-                if hasattr(checkout, 'transaction_fee') and checkout.transaction_fee:
-                    shop_transaction_fee = float(checkout.transaction_fee)
-                    break
             
             # Count total shops in order and confirmed shops
             all_order_shop_statuses = OrderShopStatus.objects.filter(order=order)
@@ -27825,10 +27827,10 @@ class SellerOrderList(viewsets.ViewSet):
                         'contact_number': order.user.contact_number,
                     },
                     'status': self._get_shop_shipping_status(shop_status.status),
-                    'total_amount': float(shop_grand_total),  # Now using checkout.total_amount sum
+                    'total_amount': float(shop_grand_total),
                     'subtotal': float(shop_subtotal),
-                    'shipping_fee': float(shop_total_shipping_fee),
-                    'transaction_fee': shop_transaction_fee,
+                    'shipping_fee': float(shop_shipping_fee),  # Single shipping fee for the shop, not summed
+                    'transaction_fee': float(shop_total_transaction_fee),
                     'discount_applied': float(shop_discount_applied),
                     'total_vat': float(shop_total_vat),
                     'payment_method': order.payment_method,
@@ -27859,7 +27861,7 @@ class SellerOrderList(viewsets.ViewSet):
             return Response({'success': False, 'message': 'Order not found'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             return Response({'success': False, 'message': f'Error retrieving order: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
+                
 
 
 class CheckoutOrder(viewsets.ViewSet):

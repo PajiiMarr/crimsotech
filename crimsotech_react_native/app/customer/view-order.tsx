@@ -209,6 +209,7 @@ type ShopItemGroup = {
 const groupItemsByShop = (
   items: OrderItem[],
   transactionFeePerShop?: Record<string, number | string>,
+  shippingFeesBreakdown?: Record<string, number | string>,
 ): ShopItemGroup[] => {
   const grouped = new Map<string, ShopItemGroup>();
 
@@ -221,7 +222,25 @@ const groupItemsByShop = (
     const shopName = item.shop_info?.name || "Unknown Shop";
     const shopPicture = item.shop_info?.picture || null;
     const subtotal = parseFloat(item.subtotal || "0") || 0;
-    const shippingFee = parseFloat(item.shipping_fee || "0") || 0;
+
+    // Get shipping fee from breakdown (once per shop, NOT per item)
+    let shippingFee = 0;
+    if (shippingFeesBreakdown) {
+      // Try to find shipping fee for this shop from breakdown
+      if (shippingFeesBreakdown[shopId]) {
+        shippingFee = parseFloat(String(shippingFeesBreakdown[shopId])) || 0;
+      } else {
+        // Try to find by matching shop name or partial ID
+        const matchingKey = Object.keys(shippingFeesBreakdown).find(
+          (key) => key.includes(shopId) || shopId.includes(key),
+        );
+        if (matchingKey) {
+          shippingFee =
+            parseFloat(String(shippingFeesBreakdown[matchingKey])) || 0;
+        }
+      }
+    }
+
     const transactionFee = transactionFeePerShop?.[shopId]
       ? parseFloat(String(transactionFeePerShop[shopId]))
       : 0;
@@ -230,7 +249,7 @@ const groupItemsByShop = (
     if (existing) {
       existing.items.push(item);
       existing.subtotal += subtotal;
-      existing.shippingFee += shippingFee;
+      // DO NOT add shipping fee per item - use the fixed shop shipping fee
       existing.transactionFee = transactionFee;
       existing.total =
         existing.subtotal + existing.shippingFee + existing.transactionFee;
@@ -244,7 +263,7 @@ const groupItemsByShop = (
       shopPicture,
       items: [item],
       subtotal,
-      shippingFee,
+      shippingFee, // Use the breakdown value once per shop
       transactionFee,
       total: subtotal + shippingFee + transactionFee,
     });
@@ -1818,7 +1837,11 @@ export default function ViewTrackOrderPage() {
 
   const transactionFeePerShop = order_summary.transaction_fee_per_shop || {};
   const groupedItemsByShop = !isFilteringByShop
-    ? groupItemsByShop(items, transactionFeePerShop)
+    ? groupItemsByShop(
+        items,
+        transactionFeePerShop,
+        order_summary.shipping_fees_breakdown,
+      )
     : [];
   const isSingleShop = isFilteringByShop || groupedItemsByShop.length === 1;
   const currentShopName = isFilteringByShop
@@ -2750,7 +2773,6 @@ export default function ViewTrackOrderPage() {
                     ))}
                   </View>
 
-                  {/* Shop Summary Row */}
                   <View style={styles.shopSummaryContainer}>
                     <View style={styles.shopSummaryRow}>
                       <Text style={styles.shopSummaryLabel}>Subtotal</Text>
@@ -2824,7 +2846,10 @@ export default function ViewTrackOrderPage() {
 
                 // DO NOT subtract discount from total - only display it
                 const shopTotal =
-                  totalItemPrice + shopShippingFee + shopTransactionFee - shopDiscount;
+                  totalItemPrice +
+                  shopShippingFee +
+                  shopTransactionFee -
+                  shopDiscount;
 
                 return (
                   <>
