@@ -29352,6 +29352,52 @@ class ShippingAddressViewSet(viewsets.ViewSet):  # Renamed to avoid conflict
             ) 
 
 class PurchasesBuyer(viewsets.ViewSet):
+    @action(detail=True, methods=['post'], url_path='close-refund')
+    def close_refund(self, request, pk=None):
+        """Customer closes/expires the refund for a shop's order"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({'error': 'X-User-Id header is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = User.objects.get(id=user_id)
+            order = Order.objects.get(order=pk, user=user)
+        except User.DoesNotExist:
+            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Order.DoesNotExist:
+            return Response({'error': 'Order not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        shop_id = request.data.get('shop_id')
+        if not shop_id:
+            return Response({'error': 'shop_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            shop = Shop.objects.get(id=shop_id)
+        except Shop.DoesNotExist:
+            return Response({'error': 'Shop not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            # Get the OrderShopStatus for this order and shop
+            order_shop_status = OrderShopStatus.objects.get(order=order, shop=shop)
+            
+            # Update refund_status to 'expired'
+            order_shop_status.refund_status = 'expired'
+            order_shop_status.save(update_fields=['refund_status'])
+            
+            logger.info(f"Refund closed (expired) for order {order.order} - shop {shop.name}")
+            
+            return Response({
+                'success': True,
+                'message': 'Refund request has been closed successfully',
+                'refund_status': order_shop_status.refund_status
+            }, status=status.HTTP_200_OK)
+            
+        except OrderShopStatus.DoesNotExist:
+            return Response({'error': 'Order shop status not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logger.exception('Error closing refund: %s', e)
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
     def _auto_complete_if_needed(self, order):
         """Auto-complete order if picked_up or delivered for 24+ hours"""
         from django.utils import timezone
@@ -30395,7 +30441,8 @@ class PurchasesBuyer(viewsets.ViewSet):
                     'shop_statuses': {
                         str(oss.shop.id): {
                             'status': oss.status,
-                            'refund_expire_date': oss.refund_expire_date.isoformat() if oss.refund_expire_date else None
+                            'refund_expire_date': oss.refund_expire_date.isoformat() if oss.refund_expire_date else None,
+                            'refund_status': oss.refund_status 
                         }
                         for oss in OrderShopStatus.objects.filter(order=order)
                     },
