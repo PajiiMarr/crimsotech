@@ -25862,7 +25862,8 @@ class SellerOrderList(viewsets.ViewSet):
                             delivery = d
                             break
                 
-                if delivery:
+                # IMPORTANT: Only use non-cancelled deliveries to update checkout status
+                if delivery and delivery.status != 'cancelled':
                     # Get all checkouts for this shop
                     shop_checkouts = Checkout.objects.filter(
                         Q(order=order, cart_item__product__shop=shop) |
@@ -26518,6 +26519,7 @@ class SellerOrderList(viewsets.ViewSet):
                     return Response({"success": False, "message": "Order cannot be cancelled at this stage"}, status=status.HTTP_400_BAD_REQUEST)
                 
                 # Special handling for rider_assigned status - revert to processing (cancel shipment)
+                # Special handling for rider_assigned status - revert to processing (cancel shipment)
                 if shop_status.status == 'rider_assigned':
                     # Cancel the delivery that was assigned
                     delivery = Delivery.objects.filter(order=order, shop=shop).order_by('-created_at').first()
@@ -26525,6 +26527,17 @@ class SellerOrderList(viewsets.ViewSet):
                         delivery.status = 'cancelled'
                         delivery.save()
                         print(f"✅ Cancelled delivery {delivery.id} for order {order.order}")
+                    
+                    # Reset checkout statuses back to pending for this shop
+                    shop_checkouts = Checkout.objects.filter(
+                        Q(order=order, cart_item__product__shop=shop) |
+                        Q(order=order, direct_shop_id=str(shop.id))
+                    )
+                    for checkout in shop_checkouts:
+                        if checkout.status != 'cancelled':
+                            checkout.status = 'pending'
+                            checkout.save(update_fields=['status'])
+                            print(f"✅ Reset checkout {checkout.id} status to pending")
                     
                     # Revert status back to processing
                     shop_status.status = 'processing'
@@ -26928,6 +26941,7 @@ class SellerOrderList(viewsets.ViewSet):
             proof_images = []
             
             try:
+                # Important: Exclude cancelled deliveries from being shown
                 active_delivery = Delivery.objects.filter(
                     order=order,
                     shop=shop
@@ -26945,9 +26959,16 @@ class SellerOrderList(viewsets.ViewSet):
                     ),
                     '-created_at'
                 ).select_related('rider__rider').first()
-                
+
+                # CRITICAL FIX: Only fetch the most recent delivery as fallback, but ensure it's not cancelled
                 if not active_delivery:
-                    active_delivery = Delivery.objects.filter(order=order, shop=shop).order_by('-created_at').first()
+                    # Get the most recent non-cancelled delivery
+                    active_delivery = Delivery.objects.filter(
+                        order=order, 
+                        shop=shop
+                    ).exclude(
+                        status__in=['cancelled', 'expired', 'rejected', 'declined']
+                    ).order_by('-created_at').first()
                 
                 if active_delivery:
                     is_accepted = active_delivery.status in ['accepted', 'picked_up', 'in_progress', 'delivered']
