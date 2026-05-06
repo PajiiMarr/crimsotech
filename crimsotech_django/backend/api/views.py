@@ -1453,32 +1453,32 @@ class AdminDashboard(viewsets.ViewSet):
                 created_at__date__lte=end_date
             ).count()
 
-            # Calculate revenue breakdown including pending orders
-            current_completed_orders = Order.objects.filter(
-                created_at__date__gte=start_date,
-                created_at__date__lte=end_date,
-                status='completed'
+            # Calculate revenue using checkout totals (more accurate)
+            current_completed_checkouts = Checkout.objects.filter(
+                order__created_at__date__gte=start_date,
+                order__created_at__date__lte=end_date,
+                order__status='completed'
             )
-            current_completed_revenue = current_completed_orders.aggregate(
+            current_completed_revenue = current_completed_checkouts.aggregate(
                 total_revenue=Sum('total_amount')
             )['total_revenue'] or Decimal('0')
 
-            # Calculate incoming balance from ongoing transactions (pending/processing orders)
-            current_pending_orders = Order.objects.filter(
-                created_at__date__gte=start_date,
-                created_at__date__lte=end_date,
-                status__in=['pending', 'processing', 'shipped']
+            # Pending orders (using checkout totals)
+            current_pending_checkouts = Checkout.objects.filter(
+                order__created_at__date__gte=start_date,
+                order__created_at__date__lte=end_date,
+                order__status__in=['pending', 'processing', 'shipped']
             )
-            current_pending_revenue = current_pending_orders.aggregate(
+            current_pending_revenue = current_pending_checkouts.aggregate(
                 total_revenue=Sum('total_amount')
             )['total_revenue'] or Decimal('0')
 
-            # Total revenue including pending
             current_revenue = current_completed_revenue + current_pending_revenue
 
-            # Calculate shipping fees from completed orders
+            # Calculate shipping fees from deliveries
             current_shipping_fees = Delivery.objects.filter(
-                order__in=current_completed_orders,
+                order__created_at__date__gte=start_date,
+                order__created_at__date__lte=end_date,
                 status='delivered'
             ).aggregate(
                 total_shipping=Sum('delivery_fee')
@@ -1487,35 +1487,44 @@ class AdminDashboard(viewsets.ViewSet):
             # Calculate platform fees (5% of order total for completed orders)
             current_platform_fees = current_completed_revenue * Decimal('0.05')
 
-            # Calculate VAT collected from successful/completed orders
-            # VAT is calculated as price * (vat_percentage / 100) for each variant in completed orders
+            # Calculate transaction fees collected (from checkout.transaction_fee)
+            current_transaction_fees = Checkout.objects.filter(
+                order__created_at__date__gte=start_date,
+                order__created_at__date__lte=end_date,
+                transaction_fee__isnull=False
+            ).aggregate(
+                total_fees=Sum('transaction_fee')
+            )['total_fees'] or Decimal('0')
+
+            # Calculate VAT collected from checkouts
             vat_collected = Decimal('0')
-            
-            # Get all checkouts from completed orders
-            completed_checkouts = Checkout.objects.filter(
-                order__in=current_completed_orders,
+            vat_checkouts = Checkout.objects.filter(
+                order__created_at__date__gte=start_date,
+                order__created_at__date__lte=end_date,
                 order__status='completed'
             ).select_related('cart_item__variant', 'order')
             
-            for checkout in completed_checkouts:
+            for checkout in vat_checkouts:
                 if checkout.cart_item and checkout.cart_item.variant:
                     variant = checkout.cart_item.variant
-                    # Get variant price and VAT percentage
-                    price = variant.price or Decimal('0')
-                    vat_percentage = variant.value_added_tax or Decimal('12.00')
-                    # Calculate VAT amount: price * (vat_percentage / 100)
-                    vat_amount = price * (vat_percentage / Decimal('100'))
-                    vat_collected += vat_amount * checkout.quantity
+                    if variant.value_added_tax_amount:
+                        vat_collected += Decimal(str(variant.value_added_tax_amount)) * checkout.quantity
                 elif checkout.direct_variant_id:
-                    # Handle direct checkout (product purchased directly without cart)
                     try:
                         variant = Variants.objects.get(id=checkout.direct_variant_id)
-                        price = variant.price or Decimal('0')
-                        vat_percentage = variant.value_added_tax or Decimal('12.00')
-                        vat_amount = price * (vat_percentage / Decimal('100'))
-                        vat_collected += vat_amount * checkout.quantity
+                        if variant.value_added_tax_amount:
+                            vat_collected += Decimal(str(variant.value_added_tax_amount)) * checkout.quantity
                     except Variants.DoesNotExist:
                         pass
+
+            # Discount applied
+            current_discounts = Checkout.objects.filter(
+                order__created_at__date__gte=start_date,
+                order__created_at__date__lte=end_date,
+                discount_applied__gt=0
+            ).aggregate(
+                total_discount=Sum('discount_applied')
+            )['total_discount'] or Decimal('0')
 
             # Previous period metrics
             previous_orders = Order.objects.filter(
@@ -1523,47 +1532,44 @@ class AdminDashboard(viewsets.ViewSet):
                 created_at__date__lte=previous_end_date
             ).count()
 
-            previous_completed_orders = Order.objects.filter(
-                created_at__date__gte=previous_start_date,
-                created_at__date__lte=previous_end_date,
-                status='completed'
+            previous_completed_checkouts = Checkout.objects.filter(
+                order__created_at__date__gte=previous_start_date,
+                order__created_at__date__lte=previous_end_date,
+                order__status='completed'
             )
-            previous_completed_revenue = previous_completed_orders.aggregate(
+            previous_completed_revenue = previous_completed_checkouts.aggregate(
                 total_revenue=Sum('total_amount')
             )['total_revenue'] or Decimal('0')
 
-            previous_pending_orders = Order.objects.filter(
-                created_at__date__gte=previous_start_date,
-                created_at__date__lte=previous_end_date,
-                status__in=['pending', 'processing', 'shipped']
+            previous_pending_checkouts = Checkout.objects.filter(
+                order__created_at__date__gte=previous_start_date,
+                order__created_at__date__lte=previous_end_date,
+                order__status__in=['pending', 'processing', 'shipped']
             )
-            previous_pending_revenue = previous_pending_orders.aggregate(
+            previous_pending_revenue = previous_pending_checkouts.aggregate(
                 total_revenue=Sum('total_amount')
             )['total_revenue'] or Decimal('0')
 
             previous_revenue = previous_completed_revenue + previous_pending_revenue
 
-            # Previous period VAT collected
+            # Previous period VAT
             previous_vat_collected = Decimal('0')
-            previous_completed_checkouts = Checkout.objects.filter(
-                order__in=previous_completed_orders,
+            previous_vat_checkouts = Checkout.objects.filter(
+                order__created_at__date__gte=previous_start_date,
+                order__created_at__date__lte=previous_end_date,
                 order__status='completed'
-            ).select_related('cart_item__variant', 'order')
+            ).select_related('cart_item__variant')
             
-            for checkout in previous_completed_checkouts:
+            for checkout in previous_vat_checkouts:
                 if checkout.cart_item and checkout.cart_item.variant:
                     variant = checkout.cart_item.variant
-                    price = variant.price or Decimal('0')
-                    vat_percentage = variant.value_added_tax or Decimal('12.00')
-                    vat_amount = price * (vat_percentage / Decimal('100'))
-                    previous_vat_collected += vat_amount * checkout.quantity
+                    if variant.value_added_tax_amount:
+                        previous_vat_collected += Decimal(str(variant.value_added_tax_amount)) * checkout.quantity
                 elif checkout.direct_variant_id:
                     try:
                         variant = Variants.objects.get(id=checkout.direct_variant_id)
-                        price = variant.price or Decimal('0')
-                        vat_percentage = variant.value_added_tax or Decimal('12.00')
-                        vat_amount = price * (vat_percentage / Decimal('100'))
-                        previous_vat_collected += vat_amount * checkout.quantity
+                        if variant.value_added_tax_amount:
+                            previous_vat_collected += Decimal(str(variant.value_added_tax_amount)) * checkout.quantity
                     except Variants.DoesNotExist:
                         pass
 
@@ -1581,7 +1587,7 @@ class AdminDashboard(viewsets.ViewSet):
             if float(previous_vat_collected) > 0:
                 vat_growth = ((float(vat_collected) - float(previous_vat_collected)) / float(previous_vat_collected)) * 100
 
-            # Active customers
+            # Active customers and shops
             active_customers = User.objects.filter(
                 is_customer=True,
                 is_suspended=False,
@@ -1594,55 +1600,61 @@ class AdminDashboard(viewsets.ViewSet):
                 created_at__date__lte=end_date
             ).count()
 
-            # Lifetime totals including all orders
-            total_completed_revenue = Order.objects.filter(
-                status='completed',
-                created_at__date__lte=end_date
-            ).aggregate(
+            # Lifetime totals
+            lifetime_completed_checkouts = Checkout.objects.filter(
+                order__status='completed',
+                order__created_at__date__lte=end_date
+            )
+            lifetime_completed_revenue = lifetime_completed_checkouts.aggregate(
                 total_revenue=Sum('total_amount')
             )['total_revenue'] or Decimal('0')
 
-            total_pending_revenue = Order.objects.filter(
-                status__in=['pending', 'processing', 'shipped'],
-                created_at__date__lte=end_date
-            ).aggregate(
+            lifetime_pending_checkouts = Checkout.objects.filter(
+                order__status__in=['pending', 'processing', 'shipped'],
+                order__created_at__date__lte=end_date
+            )
+            lifetime_pending_revenue = lifetime_pending_checkouts.aggregate(
                 total_revenue=Sum('total_amount')
             )['total_revenue'] or Decimal('0')
 
-            total_revenue = total_completed_revenue + total_pending_revenue
+            total_revenue = lifetime_completed_revenue + lifetime_pending_revenue
             total_orders = Order.objects.filter(
                 created_at__date__lte=end_date
             ).count()
 
-            # Lifetime VAT collected
+            # Lifetime VAT
             lifetime_vat_collected = Decimal('0')
-            all_completed_checkouts = Checkout.objects.filter(
+            lifetime_vat_checkouts = Checkout.objects.filter(
                 order__status='completed'
-            ).select_related('cart_item__variant', 'order')
+            ).select_related('cart_item__variant')
             
-            for checkout in all_completed_checkouts:
+            for checkout in lifetime_vat_checkouts:
                 if checkout.cart_item and checkout.cart_item.variant:
                     variant = checkout.cart_item.variant
-                    price = variant.price or Decimal('0')
-                    vat_percentage = variant.value_added_tax or Decimal('12.00')
-                    vat_amount = price * (vat_percentage / Decimal('100'))
-                    lifetime_vat_collected += vat_amount * checkout.quantity
+                    if variant.value_added_tax_amount:
+                        lifetime_vat_collected += Decimal(str(variant.value_added_tax_amount)) * checkout.quantity
                 elif checkout.direct_variant_id:
                     try:
                         variant = Variants.objects.get(id=checkout.direct_variant_id)
-                        price = variant.price or Decimal('0')
-                        vat_percentage = variant.value_added_tax or Decimal('12.00')
-                        vat_amount = price * (vat_percentage / Decimal('100'))
-                        lifetime_vat_collected += vat_amount * checkout.quantity
+                        if variant.value_added_tax_amount:
+                            lifetime_vat_collected += Decimal(str(variant.value_added_tax_amount)) * checkout.quantity
                     except Variants.DoesNotExist:
                         pass
 
+            # Lifetime transaction fees
+            lifetime_transaction_fees = Checkout.objects.filter(
+                transaction_fee__isnull=False
+            ).aggregate(
+                total_fees=Sum('transaction_fee')
+            )['total_fees'] or Decimal('0')
+
             return {
                 'total_revenue': float(total_revenue),
-                'total_completed_revenue': float(total_completed_revenue),
-                'total_pending_revenue': float(total_pending_revenue),
+                'total_completed_revenue': float(lifetime_completed_revenue),
+                'total_pending_revenue': float(lifetime_pending_revenue),
                 'total_orders': total_orders,
                 'total_vat_collected': float(lifetime_vat_collected),
+                'total_transaction_fees': float(lifetime_transaction_fees),
                 'active_customers': active_customers,
                 'active_shops': active_shops,
                 'current_period_orders': current_orders,
@@ -1651,7 +1663,9 @@ class AdminDashboard(viewsets.ViewSet):
                 'current_period_revenue': float(current_revenue),
                 'current_period_shipping_fees': float(current_shipping_fees),
                 'current_period_platform_fees': float(current_platform_fees),
+                'current_period_transaction_fees': float(current_transaction_fees),
                 'current_period_vat_collected': float(vat_collected),
+                'current_period_discounts': float(current_discounts),
                 'previous_period_orders': previous_orders,
                 'previous_period_revenue': float(previous_revenue),
                 'previous_period_vat_collected': float(previous_vat_collected),
@@ -1659,7 +1673,7 @@ class AdminDashboard(viewsets.ViewSet):
                 'revenue_growth': round(revenue_growth, 1),
                 'vat_growth': round(vat_growth, 1),
                 'date_range_days': date_range_days,
-                'breakdown_note': 'Platform fees calculated as 5% of completed order total only. Pending revenue represents incoming balance from ongoing transactions. VAT is calculated as 12% of product prices (or variant-specific VAT rate) from completed orders.',
+                'breakdown_note': 'Platform fees = 5% of completed order total. Transaction fees = sum of checkout.transaction_fee (5% capped at ₱50 per checkout). VAT = variant.value_added_tax_amount × quantity from completed orders.',
             }
         except Exception as e:
             print(f"Error in _get_overview_data: {str(e)}")
@@ -1677,16 +1691,16 @@ class AdminDashboard(viewsets.ViewSet):
             if range_type == 'daily' or date_range_days <= 7:
                 current_date = start_date
                 while current_date <= end_date:
-                    day_orders = Order.objects.filter(
-                        created_at__date=current_date
+                    day_checkouts = Checkout.objects.filter(
+                        order__created_at__date=current_date
                     )
                     
-                    day_completed = day_orders.filter(status='completed')
+                    day_completed = day_checkouts.filter(order__status='completed')
                     day_completed_revenue = day_completed.aggregate(
                         revenue=Sum('total_amount')
                     )['revenue'] or Decimal('0')
                     
-                    day_pending = day_orders.filter(status__in=['pending', 'processing', 'shipped'])
+                    day_pending = day_checkouts.filter(order__status__in=['pending', 'processing', 'shipped'])
                     day_pending_revenue = day_pending.aggregate(
                         revenue=Sum('total_amount')
                     )['revenue'] or Decimal('0')
@@ -1694,33 +1708,32 @@ class AdminDashboard(viewsets.ViewSet):
                     day_revenue = day_completed_revenue + day_pending_revenue
                     
                     day_shipping = Delivery.objects.filter(
-                        order__in=day_completed,
+                        order__created_at__date=current_date,
                         status='delivered'
                     ).aggregate(shipping=Sum('delivery_fee'))['shipping'] or Decimal('0')
                     
                     day_platform_fees = day_completed_revenue * Decimal('0.05')
                     
-                    # Calculate VAT collected for the day
-                    day_vat_collected = Decimal('0')
-                    day_checkouts = Checkout.objects.filter(
-                        order__in=day_completed,
-                        order__status='completed'
-                    ).select_related('cart_item__variant')
+                    day_transaction_fees = day_checkouts.filter(
+                        transaction_fee__isnull=False
+                    ).aggregate(fees=Sum('transaction_fee'))['fees'] or Decimal('0')
                     
-                    for checkout in day_checkouts:
+                    day_discounts = day_checkouts.filter(
+                        discount_applied__gt=0
+                    ).aggregate(discount=Sum('discount_applied'))['discount'] or Decimal('0')
+                    
+                    # Calculate VAT
+                    day_vat_collected = Decimal('0')
+                    for checkout in day_completed.select_related('cart_item__variant'):
                         if checkout.cart_item and checkout.cart_item.variant:
                             variant = checkout.cart_item.variant
-                            price = variant.price or Decimal('0')
-                            vat_percentage = variant.value_added_tax or Decimal('12.00')
-                            vat_amount = price * (vat_percentage / Decimal('100'))
-                            day_vat_collected += vat_amount * checkout.quantity
+                            if variant.value_added_tax_amount:
+                                day_vat_collected += Decimal(str(variant.value_added_tax_amount)) * checkout.quantity
                         elif checkout.direct_variant_id:
                             try:
                                 variant = Variants.objects.get(id=checkout.direct_variant_id)
-                                price = variant.price or Decimal('0')
-                                vat_percentage = variant.value_added_tax or Decimal('12.00')
-                                vat_amount = price * (vat_percentage / Decimal('100'))
-                                day_vat_collected += vat_amount * checkout.quantity
+                                if variant.value_added_tax_amount:
+                                    day_vat_collected += Decimal(str(variant.value_added_tax_amount)) * checkout.quantity
                             except Variants.DoesNotExist:
                                 pass
 
@@ -1730,11 +1743,13 @@ class AdminDashboard(viewsets.ViewSet):
                         'revenue': float(day_revenue),
                         'completed_revenue': float(day_completed_revenue),
                         'pending_revenue': float(day_pending_revenue),
-                        'orders': day_orders.count(),
-                        'completed_orders': day_completed.count(),
-                        'pending_orders': day_pending.count(),
+                        'orders': day_checkouts.values('order').distinct().count(),
+                        'completed_orders': day_completed.values('order').distinct().count(),
+                        'pending_orders': day_pending.values('order').distinct().count(),
                         'shipping_fees': float(day_shipping),
                         'platform_fees': float(day_platform_fees),
+                        'transaction_fees': float(day_transaction_fees),
+                        'discounts': float(day_discounts),
                         'vat_collected': float(day_vat_collected),
                     })
 
@@ -1742,14 +1757,14 @@ class AdminDashboard(viewsets.ViewSet):
                 grouping = 'daily'
 
             elif range_type == 'monthly' or date_range_days > 60:
-                monthly_sales = Order.objects.filter(
-                    created_at__date__gte=start_date,
-                    created_at__date__lte=end_date
+                monthly_sales = Checkout.objects.filter(
+                    order__created_at__date__gte=start_date,
+                    order__created_at__date__lte=end_date
                 ).annotate(
-                    month=TruncMonth('created_at')
+                    month=TruncMonth('order__created_at')
                 ).values('month').annotate(
                     total_revenue=Sum('total_amount'),
-                    orders=Count('order')
+                    unique_orders=Count('order', distinct=True)
                 ).order_by('month')
 
                 for month_data in monthly_sales:
@@ -1757,20 +1772,17 @@ class AdminDashboard(viewsets.ViewSet):
                         month_start = month_data['month'].date()
                         month_end = (month_start + timedelta(days=32)).replace(day=1) - timedelta(days=1)
                         
-                        month_completed = Order.objects.filter(
-                            created_at__date__gte=month_start,
-                            created_at__date__lte=month_end,
-                            status='completed'
+                        month_checkouts = Checkout.objects.filter(
+                            order__created_at__date__gte=month_start,
+                            order__created_at__date__lte=month_end
                         )
+                        
+                        month_completed = month_checkouts.filter(order__status='completed')
                         month_completed_revenue = month_completed.aggregate(
                             revenue=Sum('total_amount')
                         )['revenue'] or Decimal('0')
                         
-                        month_pending = Order.objects.filter(
-                            created_at__date__gte=month_start,
-                            created_at__date__lte=month_end,
-                            status__in=['pending', 'processing', 'shipped']
-                        )
+                        month_pending = month_checkouts.filter(order__status__in=['pending', 'processing', 'shipped'])
                         month_pending_revenue = month_pending.aggregate(
                             revenue=Sum('total_amount')
                         )['revenue'] or Decimal('0')
@@ -1778,33 +1790,33 @@ class AdminDashboard(viewsets.ViewSet):
                         month_revenue = month_completed_revenue + month_pending_revenue
                         
                         month_shipping = Delivery.objects.filter(
-                            order__in=month_completed,
+                            order__created_at__date__gte=month_start,
+                            order__created_at__date__lte=month_end,
                             status='delivered'
                         ).aggregate(shipping=Sum('delivery_fee'))['shipping'] or Decimal('0')
                         
                         month_platform_fees = month_completed_revenue * Decimal('0.05')
                         
-                        # Calculate VAT collected for the month
-                        month_vat_collected = Decimal('0')
-                        month_checkouts = Checkout.objects.filter(
-                            order__in=month_completed,
-                            order__status='completed'
-                        ).select_related('cart_item__variant')
+                        month_transaction_fees = month_checkouts.filter(
+                            transaction_fee__isnull=False
+                        ).aggregate(fees=Sum('transaction_fee'))['fees'] or Decimal('0')
                         
-                        for checkout in month_checkouts:
+                        month_discounts = month_checkouts.filter(
+                            discount_applied__gt=0
+                        ).aggregate(discount=Sum('discount_applied'))['discount'] or Decimal('0')
+                        
+                        # Calculate VAT
+                        month_vat_collected = Decimal('0')
+                        for checkout in month_completed.select_related('cart_item__variant'):
                             if checkout.cart_item and checkout.cart_item.variant:
                                 variant = checkout.cart_item.variant
-                                price = variant.price or Decimal('0')
-                                vat_percentage = variant.value_added_tax or Decimal('12.00')
-                                vat_amount = price * (vat_percentage / Decimal('100'))
-                                month_vat_collected += vat_amount * checkout.quantity
+                                if variant.value_added_tax_amount:
+                                    month_vat_collected += Decimal(str(variant.value_added_tax_amount)) * checkout.quantity
                             elif checkout.direct_variant_id:
                                 try:
                                     variant = Variants.objects.get(id=checkout.direct_variant_id)
-                                    price = variant.price or Decimal('0')
-                                    vat_percentage = variant.value_added_tax or Decimal('12.00')
-                                    vat_amount = price * (vat_percentage / Decimal('100'))
-                                    month_vat_collected += vat_amount * checkout.quantity
+                                    if variant.value_added_tax_amount:
+                                        month_vat_collected += Decimal(str(variant.value_added_tax_amount)) * checkout.quantity
                                 except Variants.DoesNotExist:
                                     pass
 
@@ -1814,11 +1826,13 @@ class AdminDashboard(viewsets.ViewSet):
                             'revenue': float(month_revenue),
                             'completed_revenue': float(month_completed_revenue),
                             'pending_revenue': float(month_pending_revenue),
-                            'orders': month_data['orders'] or 0,
-                            'completed_orders': month_completed.count(),
-                            'pending_orders': month_pending.count(),
+                            'orders': month_data['unique_orders'] or 0,
+                            'completed_orders': month_completed.values('order').distinct().count(),
+                            'pending_orders': month_pending.values('order').distinct().count(),
                             'shipping_fees': float(month_shipping),
                             'platform_fees': float(month_platform_fees),
+                            'transaction_fees': float(month_transaction_fees),
+                            'discounts': float(month_discounts),
                             'vat_collected': float(month_vat_collected),
                         })
                 grouping = 'monthly'
@@ -1829,17 +1843,17 @@ class AdminDashboard(viewsets.ViewSet):
                 while current_date <= end_date:
                     week_end = min(current_date + timedelta(days=6), end_date)
                     
-                    week_orders = Order.objects.filter(
-                        created_at__date__gte=current_date,
-                        created_at__date__lte=week_end
+                    week_checkouts = Checkout.objects.filter(
+                        order__created_at__date__gte=current_date,
+                        order__created_at__date__lte=week_end
                     )
                     
-                    week_completed = week_orders.filter(status='completed')
+                    week_completed = week_checkouts.filter(order__status='completed')
                     week_completed_revenue = week_completed.aggregate(
                         revenue=Sum('total_amount')
                     )['revenue'] or Decimal('0')
                     
-                    week_pending = week_orders.filter(status__in=['pending', 'processing', 'shipped'])
+                    week_pending = week_checkouts.filter(order__status__in=['pending', 'processing', 'shipped'])
                     week_pending_revenue = week_pending.aggregate(
                         revenue=Sum('total_amount')
                     )['revenue'] or Decimal('0')
@@ -1847,33 +1861,33 @@ class AdminDashboard(viewsets.ViewSet):
                     week_revenue = week_completed_revenue + week_pending_revenue
                     
                     week_shipping = Delivery.objects.filter(
-                        order__in=week_completed,
+                        order__created_at__date__gte=current_date,
+                        order__created_at__date__lte=week_end,
                         status='delivered'
                     ).aggregate(shipping=Sum('delivery_fee'))['shipping'] or Decimal('0')
                     
                     week_platform_fees = week_completed_revenue * Decimal('0.05')
                     
-                    # Calculate VAT collected for the week
-                    week_vat_collected = Decimal('0')
-                    week_checkouts = Checkout.objects.filter(
-                        order__in=week_completed,
-                        order__status='completed'
-                    ).select_related('cart_item__variant')
+                    week_transaction_fees = week_checkouts.filter(
+                        transaction_fee__isnull=False
+                    ).aggregate(fees=Sum('transaction_fee'))['fees'] or Decimal('0')
                     
-                    for checkout in week_checkouts:
+                    week_discounts = week_checkouts.filter(
+                        discount_applied__gt=0
+                    ).aggregate(discount=Sum('discount_applied'))['discount'] or Decimal('0')
+                    
+                    # Calculate VAT
+                    week_vat_collected = Decimal('0')
+                    for checkout in week_completed.select_related('cart_item__variant'):
                         if checkout.cart_item and checkout.cart_item.variant:
                             variant = checkout.cart_item.variant
-                            price = variant.price or Decimal('0')
-                            vat_percentage = variant.value_added_tax or Decimal('12.00')
-                            vat_amount = price * (vat_percentage / Decimal('100'))
-                            week_vat_collected += vat_amount * checkout.quantity
+                            if variant.value_added_tax_amount:
+                                week_vat_collected += Decimal(str(variant.value_added_tax_amount)) * checkout.quantity
                         elif checkout.direct_variant_id:
                             try:
                                 variant = Variants.objects.get(id=checkout.direct_variant_id)
-                                price = variant.price or Decimal('0')
-                                vat_percentage = variant.value_added_tax or Decimal('12.00')
-                                vat_amount = price * (vat_percentage / Decimal('100'))
-                                week_vat_collected += vat_amount * checkout.quantity
+                                if variant.value_added_tax_amount:
+                                    week_vat_collected += Decimal(str(variant.value_added_tax_amount)) * checkout.quantity
                             except Variants.DoesNotExist:
                                 pass
 
@@ -1883,11 +1897,13 @@ class AdminDashboard(viewsets.ViewSet):
                         'revenue': float(week_revenue),
                         'completed_revenue': float(week_completed_revenue),
                         'pending_revenue': float(week_pending_revenue),
-                        'orders': week_orders.count(),
-                        'completed_orders': week_completed.count(),
-                        'pending_orders': week_pending.count(),
+                        'orders': week_checkouts.values('order').distinct().count(),
+                        'completed_orders': week_completed.values('order').distinct().count(),
+                        'pending_orders': week_pending.values('order').distinct().count(),
                         'shipping_fees': float(week_shipping),
                         'platform_fees': float(week_platform_fees),
+                        'transaction_fees': float(week_transaction_fees),
+                        'discounts': float(week_discounts),
                         'vat_collected': float(week_vat_collected),
                     })
 
@@ -2011,30 +2027,45 @@ class AdminDashboard(viewsets.ViewSet):
             from decimal import Decimal
             
             product_stats = Checkout.objects.filter(
-                created_at__gte=start_date,
-                created_at__lte=end_date,
+                order__created_at__date__gte=start_date,
+                order__created_at__date__lte=end_date,
                 cart_item__product__isnull=False
             ).values(
                 'cart_item__product__id',
-                'cart_item__product__name'
+                'cart_item__product__name',
+                'cart_item__product__shop__name'
             ).annotate(
-                order_count=Count('id', distinct=True),
-                total_revenue=Sum('total_amount')
-            ).order_by('-order_count')[:10]
+                order_count=Count('order', distinct=True),
+                total_revenue=Sum('total_amount'),
+                total_quantity=Sum('quantity')
+            ).order_by('-total_revenue')[:10]
 
             product_performance = []
             for stat in product_stats:
                 product_id = stat['cart_item__product__id']
                 product_name = stat['cart_item__product__name'] or 'Unknown Product'
+                shop_name = stat['cart_item__product__shop__name'] or 'Unknown Shop'
                 
                 product_revenue = float(stat['total_revenue'] or 0)
                 platform_fee = product_revenue * 0.05
+                product_orders = stat['order_count'] or 0
+                product_quantity = stat['total_quantity'] or 0
                 
-                # Calculate VAT collected for this product
+                # Calculate transaction fees for this product
+                product_transaction_fees = Checkout.objects.filter(
+                    order__created_at__date__gte=start_date,
+                    order__created_at__date__lte=end_date,
+                    cart_item__product__id=product_id,
+                    transaction_fee__isnull=False
+                ).aggregate(
+                    fees=Sum('transaction_fee')
+                )['fees'] or Decimal('0')
+                
+                # Calculate VAT
                 product_vat_collected = Decimal('0')
                 product_checkouts = Checkout.objects.filter(
-                    created_at__gte=start_date,
-                    created_at__lte=end_date,
+                    order__created_at__date__gte=start_date,
+                    order__created_at__date__lte=end_date,
                     cart_item__product__id=product_id,
                     order__status='completed'
                 ).select_related('cart_item__variant')
@@ -2042,20 +2073,29 @@ class AdminDashboard(viewsets.ViewSet):
                 for checkout in product_checkouts:
                     if checkout.cart_item and checkout.cart_item.variant:
                         variant = checkout.cart_item.variant
-                        price = variant.price or Decimal('0')
-                        vat_percentage = variant.value_added_tax or Decimal('12.00')
-                        vat_amount = price * (vat_percentage / Decimal('100'))
-                        product_vat_collected += vat_amount * checkout.quantity
+                        if variant.value_added_tax_amount:
+                            product_vat_collected += Decimal(str(variant.value_added_tax_amount)) * checkout.quantity
+                    elif checkout.direct_variant_id:
+                        try:
+                            variant = Variants.objects.get(id=checkout.direct_variant_id)
+                            if variant.value_added_tax_amount:
+                                product_vat_collected += Decimal(str(variant.value_added_tax_amount)) * checkout.quantity
+                        except Variants.DoesNotExist:
+                            pass
 
                 product_performance.append({
                     'name': product_name[:30] + ('...' if len(product_name) > 30 else ''),
                     'full_name': product_name,
                     'product_id': str(product_id) if product_id else None,
-                    'orders': stat['order_count'],
-                    'revenue': product_revenue,
+                    'shop_name': shop_name,
+                    'orders': product_orders,
+                    'quantity_sold': product_quantity,
+                    'revenue': round(product_revenue, 2),
                     'platform_fee': round(platform_fee, 2),
-                    'vat_collected': float(product_vat_collected),
-                    'calculation_note': 'Platform fee = 5% of product revenue from orders in this period. VAT = 12% (or variant-specific rate) of product price from completed orders.',
+                    'transaction_fees': round(float(product_transaction_fees), 2),
+                    'vat_collected': round(float(product_vat_collected), 2),
+                    'average_price': round(product_revenue / product_quantity, 2) if product_quantity > 0 else 0,
+                    'calculation_note': 'Platform fee = 5% of product revenue. Transaction fees = sum of checkout.transaction_fee (5% capped at ₱50). VAT = variant.value_added_tax_amount × quantity.',
                 })
 
             return {
@@ -2072,15 +2112,16 @@ class AdminDashboard(viewsets.ViewSet):
             from decimal import Decimal
             
             shop_stats = Checkout.objects.filter(
-                created_at__gte=start_date,
-                created_at__lte=end_date,
+                order__created_at__date__gte=start_date,
+                order__created_at__date__lte=end_date,
                 cart_item__product__shop__isnull=False
             ).values(
                 'cart_item__product__shop__id',
                 'cart_item__product__shop__name'
             ).annotate(
                 total_sales=Sum('total_amount'),
-                order_count=Count('order', distinct=True)
+                order_count=Count('order', distinct=True),
+                total_items=Sum('quantity')
             ).order_by('-total_sales')[:10]
 
             shop_performance = []
@@ -2089,17 +2130,38 @@ class AdminDashboard(viewsets.ViewSet):
                 shop_name = stat['cart_item__product__shop__name'] or 'Unknown Shop'
                 shop_sales = float(stat['total_sales'] or 0)
                 shop_orders = stat['order_count'] or 0
+                shop_items = stat['total_items'] or 0
 
                 try:
                     shop = Shop.objects.get(id=shop_id)
                     
                     platform_fee = shop_sales * 0.05
                     
-                    # Calculate VAT collected for this shop
+                    # Calculate transaction fees for this shop
+                    shop_transaction_fees = Checkout.objects.filter(
+                        order__created_at__date__gte=start_date,
+                        order__created_at__date__lte=end_date,
+                        cart_item__product__shop=shop,
+                        transaction_fee__isnull=False
+                    ).aggregate(
+                        fees=Sum('transaction_fee')
+                    )['fees'] or Decimal('0')
+                    
+                    # Calculate shipping fees for this shop
+                    shop_shipping_fees = Delivery.objects.filter(
+                        order__created_at__date__gte=start_date,
+                        order__created_at__date__lte=end_date,
+                        shop=shop,
+                        status='delivered'
+                    ).aggregate(
+                        shipping=Sum('delivery_fee')
+                    )['shipping'] or Decimal('0')
+                    
+                    # Calculate VAT for this shop
                     shop_vat_collected = Decimal('0')
                     shop_checkouts = Checkout.objects.filter(
-                        created_at__gte=start_date,
-                        created_at__lte=end_date,
+                        order__created_at__date__gte=start_date,
+                        order__created_at__date__lte=end_date,
                         cart_item__product__shop=shop,
                         order__status='completed'
                     ).select_related('cart_item__variant')
@@ -2107,19 +2169,25 @@ class AdminDashboard(viewsets.ViewSet):
                     for checkout in shop_checkouts:
                         if checkout.cart_item and checkout.cart_item.variant:
                             variant = checkout.cart_item.variant
-                            price = variant.price or Decimal('0')
-                            vat_percentage = variant.value_added_tax or Decimal('12.00')
-                            vat_amount = price * (vat_percentage / Decimal('100'))
-                            shop_vat_collected += vat_amount * checkout.quantity
+                            if variant.value_added_tax_amount:
+                                shop_vat_collected += Decimal(str(variant.value_added_tax_amount)) * checkout.quantity
                         elif checkout.direct_variant_id:
                             try:
                                 variant = Variants.objects.get(id=checkout.direct_variant_id)
-                                price = variant.price or Decimal('0')
-                                vat_percentage = variant.value_added_tax or Decimal('12.00')
-                                vat_amount = price * (vat_percentage / Decimal('100'))
-                                shop_vat_collected += vat_amount * checkout.quantity
+                                if variant.value_added_tax_amount:
+                                    shop_vat_collected += Decimal(str(variant.value_added_tax_amount)) * checkout.quantity
                             except Variants.DoesNotExist:
                                 pass
+
+                    # Calculate discounts given by this shop
+                    shop_discounts = Checkout.objects.filter(
+                        order__created_at__date__gte=start_date,
+                        order__created_at__date__lte=end_date,
+                        cart_item__product__shop=shop,
+                        discount_applied__gt=0
+                    ).aggregate(
+                        discount=Sum('discount_applied')
+                    )['discount'] or Decimal('0')
 
                     avg_rating = Review.objects.filter(
                         shop=shop,
@@ -2138,15 +2206,20 @@ class AdminDashboard(viewsets.ViewSet):
                     shop_performance.append({
                         'name': shop_name,
                         'shop_id': str(shop.id),
-                        'sales': shop_sales,
+                        'sales': round(shop_sales, 2),
                         'orders': shop_orders,
+                        'items_sold': shop_items,
                         'platform_fee': round(platform_fee, 2),
-                        'vat_collected': float(shop_vat_collected),
+                        'transaction_fees': round(float(shop_transaction_fees), 2),
+                        'shipping_fees': round(float(shop_shipping_fees), 2),
+                        'vat_collected': round(float(shop_vat_collected), 2),
+                        'discounts_given': round(float(shop_discounts), 2),
                         'average_order_value': round(shop_sales / shop_orders, 2) if shop_orders > 0 else 0,
+                        'average_items_per_order': round(shop_items / shop_orders, 2) if shop_orders > 0 else 0,
                         'rating': round(float(avg_rating), 1),
                         'followers': follower_count,
                         'products': product_count,
-                        'calculation_note': 'Platform fee = 5% of total sales from this shop in the selected period. VAT = 12% (or variant-specific rate) of product prices from completed orders.',
+                        'calculation_note': 'Platform fee = 5% of total sales. Transaction fees = sum of checkout.transaction_fee (5% capped at ₱50). VAT = variant.value_added_tax_amount × quantity.',
                     })
                 except Shop.DoesNotExist:
                     continue
@@ -2281,14 +2354,14 @@ class AdminDashboard(viewsets.ViewSet):
                 created_at__lte=end_date,
                 voucher__isnull=False
             ).aggregate(
-                total_discount=Sum('voucher__value')
+                total_discount=Sum('discount_applied')
             )['total_discount'] or Decimal('0')
 
-            # Calculate incoming balance from ongoing transactions
-            pending_orders_value = Order.objects.filter(
-                created_at__date__gte=start_date,
-                created_at__date__lte=end_date,
-                status__in=['pending', 'processing', 'shipped']
+            # Incoming balance from ongoing transactions
+            pending_orders_value = Checkout.objects.filter(
+                order__created_at__date__gte=start_date,
+                order__created_at__date__lte=end_date,
+                order__status__in=['pending', 'processing', 'shipped']
             ).aggregate(
                 total=Sum('total_amount')
             )['total'] or Decimal('0')
@@ -2317,9 +2390,11 @@ class AdminDashboard(viewsets.ViewSet):
                     'pending_refund_amount': 'Sum of total_refund_amount for pending refunds',
                     'completed_refund_amount': 'Sum of approved_refund_amount for approved refunds',
                     'total_delivery_fees': 'Sum of delivery_fee from completed deliveries',
-                    'total_voucher_discount': 'Sum of voucher values applied to checkouts',
+                    'total_voucher_discount': 'Sum of discount_applied from checkouts using vouchers',
                     'platform_fee': 'Calculated as 5% of total revenue from completed orders',
-                    'incoming_balance': 'Sum of total_amount from pending/processing/shipped orders (ongoing transactions)',
+                    'transaction_fee': 'Calculated as 5% of checkout total (excluding fees), capped at ₱50 per checkout',
+                    'vat': 'Calculated from variant.value_added_tax_amount × quantity',
+                    'incoming_balance': 'Sum of total_amount from pending/processing/shipped orders',
                 }
             }
         except Exception as e:
@@ -2339,7 +2414,6 @@ class AdminDashboard(viewsets.ViewSet):
             'refunded': '#6b7280',
         }
         return color_map.get(status.lower(), '#6b7280')
-
 
 class AdminAnalytics(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
