@@ -425,10 +425,13 @@ export default function ViewTrackOrderPage() {
           filterShopId &&
           data.order.shop_statuses?.[filterShopId as string]
         ) {
-          data.order.status = data.order.shop_statuses[filterShopId as string];
+          const shopStatus = data.order.shop_statuses[filterShopId as string];
+          // Handle both old string format and new object format
+          const status = typeof shopStatus === 'string' ? shopStatus : (shopStatus as any).status;
+          data.order.status = status;
           data.order.status_display =
-            data.order.status.charAt(0).toUpperCase() +
-            data.order.status.slice(1).replace(/_/g, " ");
+            status.charAt(0).toUpperCase() +
+            status.slice(1).replace(/_/g, " ");
         }
 
         setOrderData(data);
@@ -1596,16 +1599,36 @@ export default function ViewTrackOrderPage() {
   };
 
   const calculateRefundCountdown = () => {
-    if (!orderData?.order?.refund_expire_date) {
+    let refundExpireDate: string | null = null;
+
+    // If filtering by shop, look for refund_expire_date in shop statuses
+    if (isFilteringByShop && filterShopId) {
+      const shopStatuses = orderData?.order?.shop_statuses;
+      if (shopStatuses && typeof shopStatuses === 'object') {
+        const shopStatus = (shopStatuses as any)[filterShopId as string];
+        if (shopStatus && typeof shopStatus === 'object' && shopStatus.refund_expire_date) {
+          refundExpireDate = shopStatus.refund_expire_date;
+        }
+      }
+    } else {
+      // Otherwise check order-level refund_expire_date
+      refundExpireDate = orderData?.order?.refund_expire_date || null;
+    }
+
+    if (!refundExpireDate) {
+      console.log("⏳ No refund_expire_date found");
       setRefundCountdown(null);
       return;
     }
 
-    const expireDate = new Date(orderData.order.refund_expire_date);
+    console.log("⏳ Refund expire date:", refundExpireDate);
+    const expireDate = new Date(refundExpireDate);
     const now = new Date();
     const timeDiff = expireDate.getTime() - now.getTime();
+    console.log("⏳ Time diff (ms):", timeDiff);
 
     if (timeDiff <= 0) {
+      console.log("⏳ Refund expired");
       setRefundCountdown("Expired");
       return;
     }
@@ -1617,22 +1640,25 @@ export default function ViewTrackOrderPage() {
     const minutes = Math.floor((timeDiff % (1000 * 60 * 60)) / (1000 * 60));
     const seconds = Math.floor((timeDiff % (1000 * 60)) / 1000);
 
+    let countdown = "";
     if (days > 0) {
-      setRefundCountdown(`${days}d ${hours}h ${minutes}m`);
+      countdown = `${days}d ${hours}h ${minutes}m`;
     } else if (hours > 0) {
-      setRefundCountdown(`${hours}h ${minutes}m ${seconds}s`);
+      countdown = `${hours}h ${minutes}m ${seconds}s`;
     } else if (minutes > 0) {
-      setRefundCountdown(`${minutes}m ${seconds}s`);
+      countdown = `${minutes}m ${seconds}s`;
     } else {
-      setRefundCountdown(`${seconds}s`);
+      countdown = `${seconds}s`;
     }
+    console.log("⏳ Countdown updated:", countdown);
+    setRefundCountdown(countdown);
   };
 
   useEffect(() => {
     calculateRefundCountdown();
     const timer = setInterval(calculateRefundCountdown, 1000);
     return () => clearInterval(timer);
-  }, [orderData?.order?.refund_expire_date]);
+  }, [orderData?.order?.refund_expire_date, orderData?.order?.shop_statuses, filterShopId]);
 
   const handleReturnItem = (
     checkoutId: string,
@@ -2588,31 +2614,32 @@ export default function ViewTrackOrderPage() {
                             </Text>
                           )}
 
-                          {(item.shop_status === "delivered" ||
-                            item.shop_status === "completed") && (
+                          {/* Item Action Buttons */}
+                          {item.shop_status === "delivered" && (
                             <View style={styles.itemActionButtonsContainer}>
-                              {item.shop_status === "delivered" ||
-                                (item.shop_status === "completed" && (
-                                  <TouchableOpacity
-                                    style={styles.receiveItemButton}
-                                    onPress={() =>
-                                      handleReceiveItem(
-                                        item.checkout_id,
-                                        item.shop_info?.id,
-                                      )
-                                    }
-                                  >
-                                    <MaterialIcons
-                                      name="check-circle"
-                                      size={14}
-                                      color="#FFFFFF"
-                                    />
-                                    <Text style={styles.receiveItemButtonText}>
-                                      Mark as Received
-                                    </Text>
-                                  </TouchableOpacity>
-                                ))}
+                              <TouchableOpacity
+                                style={styles.receiveItemButton}
+                                onPress={() =>
+                                  handleReceiveItem(
+                                    item.checkout_id,
+                                    item.shop_info?.id,
+                                  )
+                                }
+                              >
+                                <MaterialIcons
+                                  name="check-circle"
+                                  size={14}
+                                  color="#FFFFFF"
+                                />
+                                <Text style={styles.receiveItemButtonText}>
+                                  Order Received
+                                </Text>
+                              </TouchableOpacity>
+                            </View>
+                          )}
 
+                          {item.shop_status === "completed" && (
+                            <View style={styles.itemActionButtonsContainer}>
                               {item.can_return && item.is_refundable && (
                                 <TouchableOpacity
                                   style={styles.returnItemButton}
@@ -2630,7 +2657,12 @@ export default function ViewTrackOrderPage() {
                                     color="#EF4444"
                                   />
                                   <Text style={styles.returnItemButtonText}>
-                                    Return/Refund
+                                    Request Refund
+                                    {refundCountdown && refundCountdown !== "Expired" && (
+                                      <Text style={{fontSize: 10, color: '#EF4444'}}>
+                                        {"\n"}({refundCountdown})
+                                      </Text>
+                                    )}
                                   </Text>
                                 </TouchableOpacity>
                               )}
@@ -2646,7 +2678,7 @@ export default function ViewTrackOrderPage() {
                                     color="#F59E0B"
                                   />
                                   <Text style={styles.rateItemButtonText}>
-                                    Rate Product
+                                    Rate
                                   </Text>
                                 </TouchableOpacity>
                               )}
@@ -2985,10 +3017,14 @@ export default function ViewTrackOrderPage() {
       {/* Sticky Action Buttons */}
       {(() => {
         
-        const currentShopStatus =
-          isFilteringByShop && filterShopId
-            ? orderData?.order?.shop_statuses?.[filterShopId as string]
-            : null;
+        const shopStatusData = isFilteringByShop && filterShopId
+          ? orderData?.order?.shop_statuses?.[filterShopId as string]
+          : null;
+        
+        // Handle both old string format and new object format
+        const currentShopStatus = typeof shopStatusData === 'string' 
+          ? shopStatusData 
+          : (shopStatusData as any)?.status || null;
 
         const showOrderReceivedForShop =
           isFilteringByShop &&
@@ -2997,8 +3033,7 @@ export default function ViewTrackOrderPage() {
 
         const showCompletedActionsForShop =
           isFilteringByShop &&
-          (currentShopStatus === "completed" ||
-            currentShopStatus === "delivered");
+          currentShopStatus === "completed";
 
         const showOrderReceivedForOrder =
           !isFilteringByShop &&
@@ -3028,9 +3063,7 @@ export default function ViewTrackOrderPage() {
 
         const showRefundRateForOrder =
           !isFilteringByShop &&
-          (orderStatusLower === "delivered" ||
-            orderStatusLower === "partially_delivered" ||
-            orderStatusLower === "completed") &&
+          orderStatusLower === "completed" &&
           (actions.can_review || actions.can_return);
 
           if (
@@ -3110,7 +3143,7 @@ export default function ViewTrackOrderPage() {
                   >
                     <Text style={styles.requestRefundButtonText}>
                       Request Refund
-                      {refundCountdown && (
+                      {refundCountdown && refundCountdown !== "Expired" && (
                         <Text style={styles.countdownText}>
                           {"\n"}({refundCountdown})
                         </Text>

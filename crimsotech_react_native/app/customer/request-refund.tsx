@@ -672,11 +672,13 @@ useEffect(() => {
   const calculateRefundAmounts = () => {
     if (!order || selectedItems.length === 0) return { fullAmount: 0, maxPartialAmount: 0 };
     
-    // Calculate the actual amount for selected items from their subtotal
-    // This is the actual price they paid for these items (including any discounts applied at item level)
-    const fullAmount = selectedItemsDetails.reduce((sum, item) => 
-        sum + (parseFloat(item.price) * item.refundQuantity), 0
-    );
+    // Calculate the actual amount for selected items from their checkout total (subtotal)
+    // This is what they actually paid for these items (including any discounts at item level)
+    const fullAmount = selectedItemsDetails.reduce((sum, item) => {
+      // Use subtotal (checkout.total_amount) as the actual refund amount
+      const itemSubtotal = parseFloat(item.subtotal || '0');
+      return sum + itemSubtotal;
+    }, 0);
     
     // For partial refund (keep_item), max is 70% of the selected items' value
     const maxPartialAmount = fullAmount * 0.7;
@@ -687,10 +689,12 @@ useEffect(() => {
   const { fullAmount, maxPartialAmount } = calculateRefundAmounts();
 
   const computeRefundBreakdown = () => {
-    // Calculate base amount as the sum of selected items' prices (what they paid for these items)
-    let baseAmount = selectedItemsDetails.reduce((sum, item) => 
-        sum + (parseFloat(item.price) * item.refundQuantity), 0
-    );
+    // Calculate base amount as the sum of selected items' checkout totals (what they paid for these items)
+    let baseAmount = selectedItemsDetails.reduce((sum, item) => {
+      // Use subtotal (checkout.total_amount) as the actual refund amount
+      const itemSubtotal = parseFloat(item.subtotal || '0');
+      return sum + itemSubtotal;
+    }, 0);
     
     if (selectedRefundType && selectedRefundType.id === 'keep_item') {
         baseAmount = partialAmount ? parseFloat(partialAmount) : maxPartialAmount;
@@ -818,7 +822,7 @@ useEffect(() => {
       const items = selectedItemsDetails.map(item => ({
         checkout_id: item.checkout_id,
         quantity: item.refundQuantity,
-        amount: (parseFloat(item.price) * item.refundQuantity), 
+        amount: parseFloat(item.subtotal || '0'),  // Use actual checkout total amount, not price × quantity
       }));
 
       const firstSelectedItem = selectedItemsDetails[0];
