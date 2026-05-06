@@ -95,6 +95,9 @@ from .tasks import assign_deliveries_task, check_delivery_responses_task
 import traceback
 import base64
 
+from django.db.models import F, Q, Sum, Count, Avg, Value, ExpressionWrapper, DurationField
+from django.db.models.functions import TruncMonth, Coalesce
+
 
 
 # Initialize classifier once (Django will cache this)
@@ -2498,6 +2501,8 @@ class AdminAnalytics(viewsets.ViewSet):
     
     def _get_order_sales_analytics(self, start_date, end_date, range_type='weekly'):
         try:
+            from decimal import Decimal
+            
             date_range_days = (end_date - start_date).days + 1
             
             if range_type == 'daily' or date_range_days <= 7:
@@ -2505,14 +2510,56 @@ class AdminAnalytics(viewsets.ViewSet):
                 order_metrics_data = []
                 
                 while current_date <= end_date:
-                    day_data = Order.objects.filter(
-                        created_at__date=current_date
-                    ).aggregate(
-                        revenue=Sum('total_amount'),
-                        orders=Count('order'),
-                        avg_order_value=Avg('total_amount')
+                    # Use Checkout instead of Order for more accurate data
+                    day_checkouts = Checkout.objects.filter(
+                        order__created_at__date=current_date
                     )
                     
+                    day_completed = day_checkouts.filter(order__status='completed')
+                    day_completed_revenue = day_completed.aggregate(total=Sum('total_amount'))['total'] or Decimal('0')
+                    
+                    day_pending = day_checkouts.filter(order__status__in=['pending', 'processing', 'shipped'])
+                    day_pending_revenue = day_pending.aggregate(total=Sum('total_amount'))['total'] or Decimal('0')
+                    
+                    day_revenue = day_completed_revenue + day_pending_revenue
+                    day_orders = day_checkouts.values('order').distinct().count()
+                    day_avg_order = day_revenue / day_orders if day_orders > 0 else 0
+                    
+                    # Calculate transaction fees
+                    day_transaction_fees = day_checkouts.filter(
+                        transaction_fee__isnull=False
+                    ).aggregate(total=Sum('transaction_fee'))['total'] or Decimal('0')
+                    
+                    # Calculate shipping fees
+                    day_shipping_fees = Delivery.objects.filter(
+                        order__created_at__date=current_date,
+                        status='delivered'
+                    ).aggregate(total=Sum('delivery_fee'))['total'] or Decimal('0')
+                    
+                    # Calculate VAT
+                    day_vat = Decimal('0')
+                    for checkout in day_completed.select_related('cart_item__variant'):
+                        if checkout.cart_item and checkout.cart_item.variant:
+                            variant = checkout.cart_item.variant
+                            if variant.value_added_tax_amount:
+                                day_vat += Decimal(str(variant.value_added_tax_amount)) * checkout.quantity
+                        elif checkout.direct_variant_id:
+                            try:
+                                variant = Variants.objects.get(id=checkout.direct_variant_id)
+                                if variant.value_added_tax_amount:
+                                    day_vat += Decimal(str(variant.value_added_tax_amount)) * checkout.quantity
+                            except Variants.DoesNotExist:
+                                pass
+                    
+                    # Calculate discounts
+                    day_discounts = day_checkouts.filter(
+                        discount_applied__gt=0
+                    ).aggregate(total=Sum('discount_applied'))['total'] or Decimal('0')
+                    
+                    # Platform fees (5% of completed revenue)
+                    day_platform_fees = day_completed_revenue * Decimal('0.05')
+                    
+                    # Refunds (cancelled orders)
                     refunds = Order.objects.filter(
                         created_at__date=current_date,
                         status='cancelled'
@@ -2520,24 +2567,30 @@ class AdminAnalytics(viewsets.ViewSet):
                     
                     order_metrics_data.append({
                         'month': current_date.strftime('%a, %b %d'),
-                        'revenue': float(day_data['revenue'] or 0),
-                        'orders': day_data['orders'] or 0,
-                        'avgOrderValue': float(day_data['avg_order_value'] or 0),
+                        'revenue': float(day_revenue),
+                        'completed_revenue': float(day_completed_revenue),
+                        'pending_revenue': float(day_pending_revenue),
+                        'orders': day_orders,
+                        'avgOrderValue': float(day_avg_order),
+                        'transaction_fees': float(day_transaction_fees),
+                        'shipping_fees': float(day_shipping_fees),
+                        'vat_collected': float(day_vat),
+                        'discounts': float(day_discounts),
+                        'platform_fees': float(day_platform_fees),
                         'refunds': refunds,
                     })
                     
                     current_date += timedelta(days=1)
                     
             elif range_type == 'monthly' or date_range_days > 60:
-                monthly_orders = Order.objects.filter(
-                    created_at__date__gte=start_date,
-                    created_at__date__lte=end_date
+                monthly_orders = Checkout.objects.filter(
+                    order__created_at__date__gte=start_date,
+                    order__created_at__date__lte=end_date
                 ).annotate(
-                    month=TruncMonth('created_at')
+                    month=TruncMonth('order__created_at')
                 ).values('month').annotate(
-                    revenue=Sum('total_amount'),
-                    orders=Count('order'),
-                    avg_order_value=Avg('total_amount')
+                    total_revenue=Sum('total_amount'),
+                    unique_orders=Count('order', distinct=True)
                 ).order_by('month')
                 
                 order_metrics_data = []
@@ -2545,6 +2598,51 @@ class AdminAnalytics(viewsets.ViewSet):
                     if month_data['month']:
                         month_start = month_data['month'].date()
                         month_end = (month_start + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+                        
+                        month_checkouts = Checkout.objects.filter(
+                            order__created_at__date__gte=month_start,
+                            order__created_at__date__lte=month_end
+                        )
+                        
+                        month_completed = month_checkouts.filter(order__status='completed')
+                        month_completed_revenue = month_completed.aggregate(total=Sum('total_amount'))['total'] or Decimal('0')
+                        
+                        month_pending = month_checkouts.filter(order__status__in=['pending', 'processing', 'shipped'])
+                        month_pending_revenue = month_pending.aggregate(total=Sum('total_amount'))['total'] or Decimal('0')
+                        
+                        month_revenue = month_completed_revenue + month_pending_revenue
+                        month_orders = month_data['unique_orders'] or 0
+                        month_avg_order = month_revenue / month_orders if month_orders > 0 else 0
+                        
+                        month_transaction_fees = month_checkouts.filter(
+                            transaction_fee__isnull=False
+                        ).aggregate(total=Sum('transaction_fee'))['total'] or Decimal('0')
+                        
+                        month_shipping_fees = Delivery.objects.filter(
+                            order__created_at__date__gte=month_start,
+                            order__created_at__date__lte=month_end,
+                            status='delivered'
+                        ).aggregate(total=Sum('delivery_fee'))['total'] or Decimal('0')
+                        
+                        month_vat = Decimal('0')
+                        for checkout in month_completed.select_related('cart_item__variant'):
+                            if checkout.cart_item and checkout.cart_item.variant:
+                                variant = checkout.cart_item.variant
+                                if variant.value_added_tax_amount:
+                                    month_vat += Decimal(str(variant.value_added_tax_amount)) * checkout.quantity
+                            elif checkout.direct_variant_id:
+                                try:
+                                    variant = Variants.objects.get(id=checkout.direct_variant_id)
+                                    if variant.value_added_tax_amount:
+                                        month_vat += Decimal(str(variant.value_added_tax_amount)) * checkout.quantity
+                                except Variants.DoesNotExist:
+                                    pass
+                        
+                        month_discounts = month_checkouts.filter(
+                            discount_applied__gt=0
+                        ).aggregate(total=Sum('discount_applied'))['total'] or Decimal('0')
+                        
+                        month_platform_fees = month_completed_revenue * Decimal('0.05')
                         
                         refunds = Order.objects.filter(
                             created_at__date__gte=month_start,
@@ -2554,9 +2652,16 @@ class AdminAnalytics(viewsets.ViewSet):
                         
                         order_metrics_data.append({
                             'month': month_data['month'].strftime('%b %Y'),
-                            'revenue': float(month_data['revenue'] or 0),
-                            'orders': month_data['orders'],
-                            'avgOrderValue': float(month_data['avg_order_value'] or 0),
+                            'revenue': float(month_revenue),
+                            'completed_revenue': float(month_completed_revenue),
+                            'pending_revenue': float(month_pending_revenue),
+                            'orders': month_orders,
+                            'avgOrderValue': float(month_avg_order),
+                            'transaction_fees': float(month_transaction_fees),
+                            'shipping_fees': float(month_shipping_fees),
+                            'vat_collected': float(month_vat),
+                            'discounts': float(month_discounts),
+                            'platform_fees': float(month_platform_fees),
                             'refunds': refunds,
                         })
             else:
@@ -2567,14 +2672,50 @@ class AdminAnalytics(viewsets.ViewSet):
                 while current_date <= end_date:
                     week_end = min(current_date + timedelta(days=6), end_date)
                     
-                    week_data = Order.objects.filter(
-                        created_at__date__gte=current_date,
-                        created_at__date__lte=week_end
-                    ).aggregate(
-                        revenue=Sum('total_amount'),
-                        orders=Count('order'),
-                        avg_order_value=Avg('total_amount')
+                    week_checkouts = Checkout.objects.filter(
+                        order__created_at__date__gte=current_date,
+                        order__created_at__date__lte=week_end
                     )
+                    
+                    week_completed = week_checkouts.filter(order__status='completed')
+                    week_completed_revenue = week_completed.aggregate(total=Sum('total_amount'))['total'] or Decimal('0')
+                    
+                    week_pending = week_checkouts.filter(order__status__in=['pending', 'processing', 'shipped'])
+                    week_pending_revenue = week_pending.aggregate(total=Sum('total_amount'))['total'] or Decimal('0')
+                    
+                    week_revenue = week_completed_revenue + week_pending_revenue
+                    week_orders = week_checkouts.values('order').distinct().count()
+                    week_avg_order = week_revenue / week_orders if week_orders > 0 else 0
+                    
+                    week_transaction_fees = week_checkouts.filter(
+                        transaction_fee__isnull=False
+                    ).aggregate(total=Sum('transaction_fee'))['total'] or Decimal('0')
+                    
+                    week_shipping_fees = Delivery.objects.filter(
+                        order__created_at__date__gte=current_date,
+                        order__created_at__date__lte=week_end,
+                        status='delivered'
+                    ).aggregate(total=Sum('delivery_fee'))['total'] or Decimal('0')
+                    
+                    week_vat = Decimal('0')
+                    for checkout in week_completed.select_related('cart_item__variant'):
+                        if checkout.cart_item and checkout.cart_item.variant:
+                            variant = checkout.cart_item.variant
+                            if variant.value_added_tax_amount:
+                                week_vat += Decimal(str(variant.value_added_tax_amount)) * checkout.quantity
+                        elif checkout.direct_variant_id:
+                            try:
+                                variant = Variants.objects.get(id=checkout.direct_variant_id)
+                                if variant.value_added_tax_amount:
+                                    week_vat += Decimal(str(variant.value_added_tax_amount)) * checkout.quantity
+                            except Variants.DoesNotExist:
+                                pass
+                    
+                    week_discounts = week_checkouts.filter(
+                        discount_applied__gt=0
+                    ).aggregate(total=Sum('discount_applied'))['total'] or Decimal('0')
+                    
+                    week_platform_fees = week_completed_revenue * Decimal('0.05')
                     
                     refunds = Order.objects.filter(
                         created_at__date__gte=current_date,
@@ -2584,15 +2725,23 @@ class AdminAnalytics(viewsets.ViewSet):
                     
                     order_metrics_data.append({
                         'month': f'Week {week_num}',
-                        'revenue': float(week_data['revenue'] or 0),
-                        'orders': week_data['orders'] or 0,
-                        'avgOrderValue': float(week_data['avg_order_value'] or 0),
+                        'revenue': float(week_revenue),
+                        'completed_revenue': float(week_completed_revenue),
+                        'pending_revenue': float(week_pending_revenue),
+                        'orders': week_orders,
+                        'avgOrderValue': float(week_avg_order),
+                        'transaction_fees': float(week_transaction_fees),
+                        'shipping_fees': float(week_shipping_fees),
+                        'vat_collected': float(week_vat),
+                        'discounts': float(week_discounts),
+                        'platform_fees': float(week_platform_fees),
                         'refunds': refunds,
                     })
                     
                     current_date = week_end + timedelta(days=1)
                     week_num += 1
             
+            # Order status distribution
             order_status_data = Order.objects.filter(
                 created_at__date__gte=start_date,
                 created_at__date__lte=end_date
@@ -2608,11 +2757,12 @@ class AdminAnalytics(viewsets.ViewSet):
                     'color': self._get_status_color(status_data['status'])
                 })
             
-            payment_methods = Order.objects.filter(
-                created_at__date__gte=start_date,
-                created_at__date__lte=end_date
-            ).values('payment_method').annotate(
-                count=Count('order')
+            # Payment method distribution
+            payment_methods = Checkout.objects.filter(
+                order__created_at__date__gte=start_date,
+                order__created_at__date__lte=end_date
+            ).values('order__payment_method').annotate(
+                count=Count('order', distinct=True)
             ).order_by('-count')
             
             payment_distribution = []
@@ -2624,7 +2774,7 @@ class AdminAnalytics(viewsets.ViewSet):
             for payment_data in payment_methods:
                 percentage = round((payment_data['count'] / total_orders * 100), 1) if total_orders > 0 else 0
                 payment_distribution.append({
-                    'method': payment_data['payment_method'],
+                    'method': payment_data['order__payment_method'] or 'Unknown',
                     'count': payment_data['count'],
                     'percentage': percentage
                 })
@@ -2762,17 +2912,20 @@ class AdminAnalytics(viewsets.ViewSet):
     
     def _get_product_inventory_analytics(self, start_date, end_date):
         try:
+            from decimal import Decimal
+            
             product_stats = Checkout.objects.filter(
-                created_at__gte=start_date,
-                created_at__lte=end_date,
+                order__created_at__date__gte=start_date,
+                order__created_at__date__lte=end_date,
                 cart_item__product__isnull=False
             ).values(
                 'cart_item__product__id',
                 'cart_item__product__name'
             ).annotate(
-                order_count=Count('id', distinct=True),
-                total_revenue=Sum('total_amount')
-            ).order_by('-order_count')[:10]
+                order_count=Count('order', distinct=True),
+                total_revenue=Sum('total_amount'),
+                total_quantity=Sum('quantity')
+            ).order_by('-total_revenue')[:10]
             
             product_performance = []
             for stat in product_stats:
@@ -2789,13 +2942,52 @@ class AdminAnalytics(viewsets.ViewSet):
                         created_at__date__lte=end_date
                     ).count()
                     
+                    # FIX: Remove created_at filter since Favorites doesn't have it
                     favorites = Favorites.objects.filter(product=product).count()
+                    
                     total_stock = product.total_stock
+                    
+                    # Calculate transaction fees for this product
+                    product_transaction_fees = Checkout.objects.filter(
+                        order__created_at__date__gte=start_date,
+                        order__created_at__date__lte=end_date,
+                        cart_item__product__id=product_id,
+                        transaction_fee__isnull=False
+                    ).aggregate(total=Sum('transaction_fee'))['total'] or Decimal('0')
+                    
+                    # Calculate VAT for this product
+                    product_vat = Decimal('0')
+                    product_checkouts = Checkout.objects.filter(
+                        order__created_at__date__gte=start_date,
+                        order__created_at__date__lte=end_date,
+                        cart_item__product__id=product_id,
+                        order__status='completed'
+                    ).select_related('cart_item__variant')
+                    
+                    for checkout in product_checkouts:
+                        if checkout.cart_item and checkout.cart_item.variant:
+                            variant = checkout.cart_item.variant
+                            if variant.value_added_tax_amount:
+                                product_vat += Decimal(str(variant.value_added_tax_amount)) * checkout.quantity
+                        elif checkout.direct_variant_id:
+                            try:
+                                variant = Variants.objects.get(id=checkout.direct_variant_id)
+                                if variant.value_added_tax_amount:
+                                    product_vat += Decimal(str(variant.value_added_tax_amount)) * checkout.quantity
+                            except Variants.DoesNotExist:
+                                pass
+                    
+                    product_revenue = float(stat['total_revenue'] or 0)
+                    product_quantity = stat['total_quantity'] or 0
                     
                     product_performance.append({
                         'name': product_name[:30] + ('...' if len(product_name) > 30 else ''),
                         'orders': stat['order_count'],
-                        'revenue': float(stat['total_revenue'] or 0),
+                        'revenue': product_revenue,
+                        'quantity_sold': product_quantity,
+                        'average_price': round(product_revenue / product_quantity, 2) if product_quantity > 0 else 0,
+                        'transaction_fees': float(product_transaction_fees),
+                        'vat_collected': float(product_vat),
                         'views': views,
                         'favorites': favorites,
                         'stock': total_stock,
@@ -2804,15 +2996,16 @@ class AdminAnalytics(viewsets.ViewSet):
                     continue
             
             category_stats = Checkout.objects.filter(
-                created_at__gte=start_date,
-                created_at__lte=end_date,
+                order__created_at__date__gte=start_date,
+                order__created_at__date__lte=end_date,
                 cart_item__product__category__isnull=False
             ).values(
                 'cart_item__product__category__id',
                 'cart_item__product__category__name'
             ).annotate(
                 total_revenue=Sum('total_amount'),
-                product_count=Count('cart_item__product', distinct=True)
+                product_count=Count('cart_item__product', distinct=True),
+                total_quantity=Sum('quantity')
             ).order_by('-total_revenue')[:10]
             
             category_data = []
@@ -2833,6 +3026,7 @@ class AdminAnalytics(viewsets.ViewSet):
                         'category': category_name,
                         'revenue': float(stat['total_revenue'] or 0),
                         'products': stat['product_count'],
+                        'quantity_sold': stat['total_quantity'],
                         'avgRating': round(float(avg_rating), 1)
                     })
                 except Category.DoesNotExist:
@@ -2875,7 +3069,7 @@ class AdminAnalytics(viewsets.ViewSet):
                 },
                 {
                     'activity': 'Wishlist Adds',
-                    'count': Favorites.objects.count()
+                    'count': Favorites.objects.count()  # FIX: Remove date filter
                 },
                 {
                     'activity': 'Reviews Posted',
@@ -2902,19 +3096,23 @@ class AdminAnalytics(viewsets.ViewSet):
                 'inventory_status_data': [],
                 'product_engagement_data': [],
             }
-    
+
+
     def _get_shop_merchant_analytics(self, start_date, end_date, range_type='weekly'):
         try:
+            from decimal import Decimal
+            
             shop_stats = Checkout.objects.filter(
-                created_at__gte=start_date,
-                created_at__lte=end_date,
+                order__created_at__date__gte=start_date,
+                order__created_at__date__lte=end_date,
                 cart_item__product__shop__isnull=False
             ).values(
                 'cart_item__product__shop__id',
                 'cart_item__product__shop__name'
             ).annotate(
                 total_sales=Sum('total_amount'),
-                order_count=Count('order', distinct=True)
+                order_count=Count('order', distinct=True),
+                total_items=Sum('quantity')
             ).order_by('-total_sales')[:10]
             
             shop_performance = []
@@ -2924,6 +3122,59 @@ class AdminAnalytics(viewsets.ViewSet):
                 
                 try:
                     shop = Shop.objects.get(id=shop_id)
+                    
+                    shop_sales = float(stat['total_sales'] or 0)
+                    shop_orders = stat['order_count'] or 0
+                    shop_items = stat['total_items'] or 0
+                    
+                    # Calculate platform fees (5% of sales)
+                    platform_fee = shop_sales * 0.05
+                    
+                    # Calculate transaction fees for this shop
+                    shop_transaction_fees = Checkout.objects.filter(
+                        order__created_at__date__gte=start_date,
+                        order__created_at__date__lte=end_date,
+                        cart_item__product__shop=shop,
+                        transaction_fee__isnull=False
+                    ).aggregate(total=Sum('transaction_fee'))['total'] or Decimal('0')
+                    
+                    # Calculate shipping fees for this shop
+                    shop_shipping_fees = Delivery.objects.filter(
+                        order__created_at__date__gte=start_date,
+                        order__created_at__date__lte=end_date,
+                        shop=shop,
+                        status='delivered'
+                    ).aggregate(total=Sum('delivery_fee'))['total'] or Decimal('0')
+                    
+                    # Calculate VAT for this shop
+                    shop_vat = Decimal('0')
+                    shop_checkouts = Checkout.objects.filter(
+                        order__created_at__date__gte=start_date,
+                        order__created_at__date__lte=end_date,
+                        cart_item__product__shop=shop,
+                        order__status='completed'
+                    ).select_related('cart_item__variant')
+                    
+                    for checkout in shop_checkouts:
+                        if checkout.cart_item and checkout.cart_item.variant:
+                            variant = checkout.cart_item.variant
+                            if variant.value_added_tax_amount:
+                                shop_vat += Decimal(str(variant.value_added_tax_amount)) * checkout.quantity
+                        elif checkout.direct_variant_id:
+                            try:
+                                variant = Variants.objects.get(id=checkout.direct_variant_id)
+                                if variant.value_added_tax_amount:
+                                    shop_vat += Decimal(str(variant.value_added_tax_amount)) * checkout.quantity
+                            except Variants.DoesNotExist:
+                                pass
+                    
+                    # Calculate discounts given by this shop
+                    shop_discounts = Checkout.objects.filter(
+                        order__created_at__date__gte=start_date,
+                        order__created_at__date__lte=end_date,
+                        cart_item__product__shop=shop,
+                        discount_applied__gt=0
+                    ).aggregate(total=Sum('discount_applied'))['total'] or Decimal('0')
                     
                     avg_rating = Review.objects.filter(
                         shop=shop,
@@ -2940,8 +3191,15 @@ class AdminAnalytics(viewsets.ViewSet):
                     
                     shop_performance.append({
                         'name': shop_name,
-                        'sales': float(stat['total_sales'] or 0),
-                        'orders': stat['order_count'] or 0,
+                        'sales': round(shop_sales, 2),
+                        'orders': shop_orders,
+                        'items_sold': shop_items,
+                        'average_order_value': round(shop_sales / shop_orders, 2) if shop_orders > 0 else 0,
+                        'platform_fee': round(platform_fee, 2),
+                        'transaction_fees': round(float(shop_transaction_fees), 2),
+                        'shipping_fees': round(float(shop_shipping_fees), 2),
+                        'vat_collected': round(float(shop_vat), 2),
+                        'discounts_given': round(float(shop_discounts), 2),
                         'rating': round(float(avg_rating), 1),
                         'followers': follower_count,
                         'products': product_count
@@ -3021,8 +3279,8 @@ class AdminAnalytics(viewsets.ViewSet):
             location_data = []
             for location in shop_locations:
                 location_revenue = Checkout.objects.filter(
-                    created_at__gte=start_date,
-                    created_at__lte=end_date,
+                    order__created_at__date__gte=start_date,
+                    order__created_at__date__lte=end_date,
                     cart_item__product__shop__city=location['city']
                 ).aggregate(total=Sum('total_amount'))['total'] or 0
                 
@@ -3049,39 +3307,45 @@ class AdminAnalytics(viewsets.ViewSet):
     
     def _get_boost_promotion_analytics(self, start_date, end_date):
         try:
-            boost_performance = Boost.objects.filter(
-                created_at__date__gte=start_date,
-                created_at__date__lte=end_date
-            ).values(
-                'boost_plan__name'
-            ).annotate(
-                usage_count=Count('id'),
-                active_boosts=Count('id', filter=Q(status='active'))
-            ).order_by('-usage_count')
+            from decimal import Decimal
+            
+            # Get boost plans and their performance
+            boost_plans = BoostPlan.objects.filter(status='active')
             
             boost_performance_data = []
-            for boost in boost_performance:
-                boost_plan_name = boost['boost_plan__name']
-                if boost_plan_name:
-                    try:
-                        boost_plan = BoostPlan.objects.get(name=boost_plan_name)
-                        total_revenue = float(boost_plan.price) * boost['usage_count']
-                    except BoostPlan.DoesNotExist:
-                        total_revenue = 0
-                else:
-                    total_revenue = 0
+            for plan in boost_plans:
+                # Count boosts using this plan
+                boosts = Boost.objects.filter(
+                    boost_plan=plan,
+                    created_at__date__gte=start_date,
+                    created_at__date__lte=end_date
+                )
+                
+                usage_count = boosts.count()
+                active_boosts = boosts.filter(status='active').count()
+                total_revenue = float(plan.price) * usage_count if plan.price else 0
+                
+                # Calculate revenue from active boosts
+                active_revenue = float(plan.price) * active_boosts if plan.price else 0
                 
                 boost_performance_data.append({
-                    'plan': boost_plan_name or 'Unknown Plan',
+                    'plan': plan.name,
                     'revenue': total_revenue,
-                    'usage': boost['usage_count'],
-                    'active_boosts': boost['active_boosts']
+                    'active_revenue': active_revenue,
+                    'usage': usage_count,
+                    'active_boosts': active_boosts,
+                    'price': float(plan.price),
+                    'duration': f"{plan.duration} {plan.time_unit}" if plan.duration else 'N/A'
                 })
+            
+            # Sort by revenue
+            boost_performance_data.sort(key=lambda x: x['revenue'], reverse=True)
             
             active_boost_status = [
                 {'status': 'Active', 'count': Boost.objects.filter(status='active').count(), 'color': '#10b981'},
                 {'status': 'Pending', 'count': Boost.objects.filter(status='pending').count(), 'color': '#f59e0b'},
                 {'status': 'Expired', 'count': Boost.objects.filter(status='expired').count(), 'color': '#6b7280'},
+                {'status': 'Payment Pending', 'count': Boost.objects.filter(status='payment_pending').count(), 'color': '#ef4444'},
             ]
             
             return {
@@ -3099,6 +3363,8 @@ class AdminAnalytics(viewsets.ViewSet):
     
     def _get_rider_delivery_analytics(self, start_date, end_date):
         try:
+            from decimal import Decimal
+            
             rider_performance = Rider.objects.annotate(
                 delivery_count=Count(
                     'delivery',
@@ -3114,6 +3380,22 @@ class AdminAnalytics(viewsets.ViewSet):
                         delivery__created_at__date__gte=start_date,
                         delivery__created_at__date__lte=end_date
                     )
+                ),
+                total_delivery_fees=Sum(
+                    'delivery__delivery_fee',
+                    filter=Q(
+                        delivery__status='delivered',
+                        delivery__created_at__date__gte=start_date,
+                        delivery__created_at__date__lte=end_date
+                    )
+                ),
+                total_distance=Sum(
+                    'delivery__distance_km',
+                    filter=Q(
+                        delivery__status='delivered',
+                        delivery__created_at__date__gte=start_date,
+                        delivery__created_at__date__lte=end_date
+                    )
                 )
             ).filter(
                 delivery_count__gt=0
@@ -3123,10 +3405,17 @@ class AdminAnalytics(viewsets.ViewSet):
             for rider in rider_performance:
                 success_rate = (rider.successful_deliveries / rider.delivery_count * 100) if rider.delivery_count > 0 else 0
                 rider_name = f"{rider.rider.first_name or ''} {rider.rider.last_name or ''}".strip() or str(rider.rider.id)
+                avg_fee = (rider.total_delivery_fees / rider.successful_deliveries) if rider.successful_deliveries > 0 else 0
+                avg_distance = (rider.total_distance / rider.successful_deliveries) if rider.successful_deliveries > 0 else 0
+                
                 rider_performance_data.append({
                     'name': rider_name,
                     'deliveries': rider.delivery_count,
-                    'successRate': round(success_rate, 1)
+                    'successful_deliveries': rider.successful_deliveries,
+                    'successRate': round(success_rate, 1),
+                    'total_earnings': float(rider.total_delivery_fees or 0),
+                    'average_delivery_fee': float(avg_fee),
+                    'average_distance_km': float(avg_distance),
                 })
             
             delivery_status_data = Delivery.objects.filter(
@@ -3139,7 +3428,8 @@ class AdminAnalytics(viewsets.ViewSet):
             status_distribution = []
             color_map = {
                 'pending': '#f59e0b', 'picked_up': '#3b82f6', 'in_progress': '#8b5cf6',
-                'delivered': '#10b981', 'cancelled': '#ef4444', 'declined': '#6b7280', 'accepted': '#3b82f6',
+                'delivered': '#10b981', 'cancelled': '#ef4444', 'declined': '#6b7280', 
+                'accepted': '#3b82f6', 'pending_offer': '#f59e0b',
             }
             for status_data in delivery_status_data:
                 status_distribution.append({
@@ -3147,6 +3437,13 @@ class AdminAnalytics(viewsets.ViewSet):
                     'count': status_data['count'],
                     'color': color_map.get(status_data['status'], '#6b7280')
                 })
+            
+            # Calculate total delivery fees
+            total_delivery_fees = Delivery.objects.filter(
+                created_at__date__gte=start_date,
+                created_at__date__lte=end_date,
+                status='delivered'
+            ).aggregate(total=Sum('delivery_fee'))['total'] or Decimal('0')
             
             rider_verification_data = [
                 {'status': 'Verified', 'count': Rider.objects.filter(verified=True).count(), 'color': '#10b981'},
@@ -3156,6 +3453,7 @@ class AdminAnalytics(viewsets.ViewSet):
             return {
                 'rider_performance_data': rider_performance_data,
                 'delivery_status_data': status_distribution,
+                'total_delivery_fees': float(total_delivery_fees),
                 'rider_verification_data': rider_verification_data,
             }
         except Exception as e:
@@ -3165,34 +3463,57 @@ class AdminAnalytics(viewsets.ViewSet):
             return {
                 'rider_performance_data': [],
                 'delivery_status_data': [],
+                'total_delivery_fees': 0,
                 'rider_verification_data': [],
             }
     
     def _get_voucher_discount_analytics(self, start_date, end_date):
         try:
+            from decimal import Decimal
+            
             voucher_stats = Checkout.objects.filter(
-                created_at__gte=start_date,
-                created_at__lte=end_date,
+                order__created_at__date__gte=start_date,
+                order__created_at__date__lte=end_date,
                 voucher__isnull=False
             ).values(
                 'voucher__code',
+                'voucher__name',
                 'voucher__discount_type'
             ).annotate(
                 usage_count=Count('id'),
-                total_amount=Sum('total_amount')
+                total_discount=Sum('discount_applied'),
+                total_amount_before_discount=Sum('total_amount') + Sum('discount_applied')
             ).order_by('-usage_count')[:10]
             
             voucher_performance_data = []
             for stat in voucher_stats:
                 voucher_performance_data.append({
                     'code': stat['voucher__code'] or 'Unknown',
+                    'name': stat['voucher__name'] or 'Unknown',
                     'usage': stat['usage_count'],
-                    'discount': float(stat['total_amount'] or 0),
-                    'type': stat['voucher__discount_type'] or 'Unknown'
+                    'total_discount': float(stat['total_discount'] or 0),
+                    'total_sales': float(stat['total_amount_before_discount'] or 0),
+                    'type': stat['voucher__discount_type'] or 'Unknown',
+                    'avg_discount_per_use': float((stat['total_discount'] / stat['usage_count']) if stat['usage_count'] > 0 else 0)
                 })
+            
+            # Overall voucher statistics
+            total_voucher_usage = Checkout.objects.filter(
+                order__created_at__date__gte=start_date,
+                order__created_at__date__lte=end_date,
+                voucher__isnull=False
+            ).count()
+            
+            total_voucher_discount = Checkout.objects.filter(
+                order__created_at__date__gte=start_date,
+                order__created_at__date__lte=end_date,
+                voucher__isnull=False
+            ).aggregate(total=Sum('discount_applied'))['total'] or Decimal('0')
             
             return {
                 'voucher_performance_data': voucher_performance_data,
+                'total_voucher_usage': total_voucher_usage,
+                'total_voucher_discount': float(total_voucher_discount),
             }
         except Exception as e:
             print(f"Error in _get_voucher_discount_analytics: {str(e)}")
@@ -3200,10 +3521,14 @@ class AdminAnalytics(viewsets.ViewSet):
             traceback.print_exc()
             return {
                 'voucher_performance_data': [],
+                'total_voucher_usage': 0,
+                'total_voucher_discount': 0,
             }
     
     def _get_refund_return_analytics(self, start_date, end_date, range_type='weekly'):
         try:
+            from decimal import Decimal
+            
             date_range_days = (end_date - start_date).days + 1
             
             if range_type == 'monthly' or date_range_days > 60:
@@ -3215,7 +3540,8 @@ class AdminAnalytics(viewsets.ViewSet):
                 ).values('month').annotate(
                     requested=Count('refund_id'),
                     approved=Count('refund_id', filter=Q(status='approved')),
-                    rejected=Count('refund_id', filter=Q(status='rejected'))
+                    rejected=Count('refund_id', filter=Q(status='rejected')),
+                    total_refund_amount=Sum('approved_refund_amount')
                 ).order_by('month')
                 
                 refund_analytics_data = []
@@ -3225,7 +3551,8 @@ class AdminAnalytics(viewsets.ViewSet):
                             'month': month_data['month'].strftime('%b %Y'),
                             'requested': month_data['requested'],
                             'approved': month_data['approved'],
-                            'rejected': month_data['rejected']
+                            'rejected': month_data['rejected'],
+                            'total_amount': float(month_data['total_refund_amount'] or 0)
                         })
             else:
                 current_date = start_date
@@ -3241,14 +3568,16 @@ class AdminAnalytics(viewsets.ViewSet):
                     ).aggregate(
                         requested=Count('refund_id'),
                         approved=Count('refund_id', filter=Q(status='approved')),
-                        rejected=Count('refund_id', filter=Q(status='rejected'))
+                        rejected=Count('refund_id', filter=Q(status='rejected')),
+                        total_refund_amount=Sum('approved_refund_amount')
                     )
                     
                     refund_analytics_data.append({
                         'month': f'Week {week_num}',
                         'requested': week_data['requested'] or 0,
                         'approved': week_data['approved'] or 0,
-                        'rejected': week_data['rejected'] or 0
+                        'rejected': week_data['rejected'] or 0,
+                        'total_amount': float(week_data['total_refund_amount'] or 0)
                     })
                     
                     current_date = week_end + timedelta(days=1)
@@ -3268,9 +3597,17 @@ class AdminAnalytics(viewsets.ViewSet):
                     'count': reason_item['count']
                 })
             
+            # Overall refund statistics
+            total_refund_amount = Refund.objects.filter(
+                requested_at__date__gte=start_date,
+                requested_at__date__lte=end_date,
+                status='approved'
+            ).aggregate(total=Sum('approved_refund_amount'))['total'] or Decimal('0')
+            
             return {
                 'refund_analytics_data': refund_analytics_data,
                 'refund_reason_data': reason_data,
+                'total_refund_amount': float(total_refund_amount),
             }
         except Exception as e:
             print(f"Error in _get_refund_return_analytics: {str(e)}")
@@ -3279,6 +3616,7 @@ class AdminAnalytics(viewsets.ViewSet):
             return {
                 'refund_analytics_data': [],
                 'refund_reason_data': [],
+                'total_refund_amount': 0,
             }
     
     def _get_report_moderation_analytics(self, start_date, end_date):
@@ -3289,7 +3627,8 @@ class AdminAnalytics(viewsets.ViewSet):
             ).values('report_type').annotate(
                 total_count=Count('id'),
                 resolved_count=Count('id', filter=Q(status='resolved')),
-                pending_count=Count('id', filter=Q(status__in=['pending', 'under_review']))
+                pending_count=Count('id', filter=Q(status__in=['pending', 'under_review'])),
+                action_taken_count=Count('id', filter=Q(status='action_taken'))
             ).order_by('-total_count')
             
             report_analytics_data = []
@@ -3298,7 +3637,8 @@ class AdminAnalytics(viewsets.ViewSet):
                     'type': report_type['report_type'].title() if report_type['report_type'] else 'Unknown',
                     'count': report_type['total_count'],
                     'resolved': report_type['resolved_count'],
-                    'pending': report_type['pending_count']
+                    'pending': report_type['pending_count'],
+                    'action_taken': report_type['action_taken_count']
                 })
             
             report_status_data = Report.objects.filter(
@@ -3320,9 +3660,27 @@ class AdminAnalytics(viewsets.ViewSet):
                     'color': color_map.get(status_item['status'], '#6b7280')
                 })
             
+            # Average resolution time (in days)
+            avg_resolution_time = Report.objects.filter(
+                created_at__date__gte=start_date,
+                created_at__date__lte=end_date,
+                status='resolved',
+                resolved_at__isnull=False
+            ).annotate(
+                resolution_time=ExpressionWrapper(
+                    F('resolved_at') - F('created_at'),
+                    output_field=DurationField()
+                )
+            ).aggregate(
+                avg_time=Avg('resolution_time')
+            )['avg_time']
+            
+            avg_days = avg_resolution_time.days if avg_resolution_time else 0
+            
             return {
                 'report_analytics_data': report_analytics_data,
                 'report_status_data': status_data,
+                'average_resolution_days': avg_days,
             }
         except Exception as e:
             print(f"Error in _get_report_moderation_analytics: {str(e)}")
@@ -3331,6 +3689,7 @@ class AdminAnalytics(viewsets.ViewSet):
             return {
                 'report_analytics_data': [],
                 'report_status_data': [],
+                'average_resolution_days': 0,
             }
     
     def _get_status_color(self, status):
@@ -3353,7 +3712,7 @@ class AdminAnalytics(viewsets.ViewSet):
             4: 'Stage 4: Complete',
         }
         return stages.get(stage, f'Stage {stage or 0}')
-
+    
 class AdminProduct(viewsets.ViewSet):
     """
     Admin viewset for managing products with comprehensive data
