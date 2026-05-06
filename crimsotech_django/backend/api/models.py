@@ -2708,3 +2708,37 @@ class OrderShopStatus(models.Model):
     
     def __str__(self):
         return f"Order {self.order.order} - Shop {self.shop.name}: {self.status}"
+
+class ShopCompensation(models.Model):
+    """
+    Track compensation paid to shops when voucher refunds expire
+    Admin creates this directly when processing expired refunds
+    """
+    STATUS_CHOICES = [
+        ('pending', 'Pending Payment'),
+        ('paid', 'Paid'),
+        ('failed', 'Failed'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
+    shop = models.ForeignKey(Shop, on_delete=models.CASCADE, related_name='compensations')
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='compensations')
+    voucher = models.ForeignKey(Voucher, on_delete=models.SET_NULL, null=True, blank=True)
+    discount_amount = models.DecimalField(max_digits=12, decimal_places=2)
+    compensation_amount = models.DecimalField(max_digits=12, decimal_places=2)  # (same as discount_amount usually)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    receipt_image = models.ImageField(upload_to='shop/compensation/receipts/', null=True, blank=True)
+    notes = models.TextField(blank=True, null=True)
+    processed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='processed_compensations')
+    processed_at = models.DateTimeField(auto_now_add=True)
+    paid_at = models.DateTimeField(null=True, blank=True)
+    
+    class Meta:
+        unique_together = ['order', 'shop']  # Prevent duplicate compensation for same order/shop
+        indexes = [
+            models.Index(fields=['shop', 'status']),
+            models.Index(fields=['order']),
+        ]
+
+    def __str__(self):
+        return f"Compensation {self.id} - {self.shop.name}: ₱{self.compensation_amount}"

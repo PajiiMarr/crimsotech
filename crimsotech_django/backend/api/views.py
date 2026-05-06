@@ -9134,7 +9134,7 @@ class AdminRiders(viewsets.ViewSet):
             except Rider.DoesNotExist:
                 return Response({
                     'success': True,
-                    'verified': False,
+                    'verified': False, 
                     'rider_status': 'not_registered',
                     'message': 'User is not registered as a rider'
                 }, status=status.HTTP_200_OK)
@@ -9547,10 +9547,11 @@ class AdminVouchers(viewsets.ViewSet):
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         
+
     @action(detail=True, methods=['get'])
     def voucher(self, request, pk=None):
         """
-        Get voucher details with usage history
+        Get voucher details with usage history including shops per order, order status, and refund status
         """
         try:
             # Get voucher by UUID
@@ -9582,12 +9583,11 @@ class AdminVouchers(viewsets.ViewSet):
                     'last_name': voucher.created_by.last_name
                 }
             
-            # FIXED: Determine status correctly
+            # Handle date/timezone conversion
             start_date = voucher.start_date
             end_date = voucher.end_date
             current_date = now
             
-            # Handle date/timezone conversion
             if hasattr(start_date, 'date'):
                 start_date = start_date.date()
             if hasattr(end_date, 'date'):
@@ -9614,6 +9614,7 @@ class AdminVouchers(viewsets.ViewSet):
                 'shop': shop_data,
                 'discount_type': voucher.discount_type,
                 'value': float(voucher.value),
+                'capped_at': float(voucher.capped_at) if voucher.capped_at else None,
                 'minimum_spend': float(voucher.minimum_spend),
                 'maximum_usage': voucher.maximum_usage,
                 'start_date': voucher.start_date.isoformat() if voucher.start_date else None,
@@ -9625,20 +9626,78 @@ class AdminVouchers(viewsets.ViewSet):
                 'usage_count': usage_count,
             }
             
-            # Get usage history - UserVoucherUsage
+            # Get usage history - UserVoucherUsage with order details
             usages = UserVoucherUsage.objects.filter(
                 voucher=voucher
             ).select_related('user', 'order').order_by('-used_at')
             
             usage_list = []
             for usage in usages:
+                order_total = float(usage.order.total_amount) if usage.order else 0
+                discount_amount = float(usage.discount_amount)
+                
+                # Get order status and refund status from OrderShopStatus per shop
+                shop_statuses = {}
+                shop_refund_statuses = {}
+                shop_refund_expire_dates = {}
+                if usage.order:
+                    # Get all OrderShopStatus for this order
+                    order_shop_statuses = OrderShopStatus.objects.filter(order=usage.order).select_related('shop')
+                    for oss in order_shop_statuses:
+                        shop_statuses[str(oss.shop.id)] = oss.status
+                        shop_refund_statuses[str(oss.shop.id)] = oss.refund_status  # ADDED: refund_status
+                        if oss.refund_expire_date:
+                            shop_refund_expire_dates[str(oss.shop.id)] = oss.refund_expire_date.isoformat()
+                        else:
+                            shop_refund_expire_dates[str(oss.shop.id)] = None
+                
+                # Get shops associated with this order
+                shops_info = []
+                if usage.order:
+                    # Get unique shops from checkouts
+                    checkout_shops = Checkout.objects.filter(
+                        order=usage.order
+                    ).select_related('cart_item__product__shop').distinct()
+                    
+                    shop_ids_seen = set()
+                    for checkout in checkout_shops:
+                        shop_id = None
+                        shop_name = None
+                        
+                        if checkout.cart_item and checkout.cart_item.product and checkout.cart_item.product.shop:
+                            shop_id = str(checkout.cart_item.product.shop.id)
+                            shop_name = checkout.cart_item.product.shop.name
+                        elif checkout.direct_shop_id:
+                            shop_id = checkout.direct_shop_id
+                            shop_name = checkout.direct_shop_name
+                        
+                        if shop_id and shop_id not in shop_ids_seen:
+                            shop_ids_seen.add(shop_id)
+                            shops_info.append({
+                                'id': shop_id,
+                                'name': shop_name or 'Unknown Shop',
+                                'status': shop_statuses.get(shop_id, 'pending'),
+                                'refund_status': shop_refund_statuses.get(shop_id, 'active'),  # ADDED: refund_status per shop
+                                'refund_expire_date': shop_refund_expire_dates.get(shop_id, None)
+                            })
+                
+                # Determine overall order status
+                overall_order_status = usage.order.status if usage.order else None
+                
                 usage_list.append({
                     'id': str(usage.id),
                     'order_id': str(usage.order.order) if usage.order else None,
+                    'order_status': overall_order_status,
+                    'shop_statuses': shop_statuses,
+                    'shop_refund_statuses': shop_refund_statuses,  # ADDED: refund statuses per shop
+                    'shop_refund_expire_dates': shop_refund_expire_dates,
                     'user_id': str(usage.user.id) if usage.user else None,
                     'user_name': f"{usage.user.first_name} {usage.user.last_name}".strip() or usage.user.username if usage.user else 'Unknown User',
-                    'discount_amount': float(usage.discount_amount),
+                    'discount_amount': discount_amount,
                     'used_at': usage.used_at.isoformat(),
+                    'order_total': order_total,
+                    'final_total': order_total - discount_amount,
+                    'shops': shops_info,
                 })
             
             return Response({
@@ -9655,7 +9714,7 @@ class AdminVouchers(viewsets.ViewSet):
                 'success': False,
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        
+
     @action(detail=True, methods=['put', 'patch'])
     def update_voucher(self, request, pk=None):
         """
@@ -9776,8 +9835,94 @@ class AdminVouchers(viewsets.ViewSet):
                 'success': False,
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-            
-             
+
+
+class ShopCompensationViewSet(viewsets.ViewSet):
+    
+    @action(detail=False, methods=['post'], url_path='create-compensation')
+    def create_compensation(self, request):
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "X-User-Id required"}, status=400)
+        
+        try:
+            user = User.objects.get(id=user_id)
+            if not user.is_admin:
+                return Response({"error": "Admin access required"}, status=403)
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=404)
+        
+        shop_id = request.data.get('shop_id')
+        order_id = request.data.get('order_id')
+        voucher_id = request.data.get('voucher_id')
+        amount = request.data.get('amount')
+        notes = request.data.get('notes', '')
+        receipt = request.FILES.get('receipt')
+        
+        if not all([shop_id, order_id, voucher_id, amount, receipt]):
+            return Response({"error": "Missing required fields"}, status=400)
+        
+        # Check if already compensated
+        existing = ShopCompensation.objects.filter(
+            shop_id=shop_id, 
+            order_id=order_id
+        ).first()
+        if existing:
+            return Response({
+                "error": "Compensation already processed for this order/shop",
+                "compensation": {
+                    "id": str(existing.id),
+                    "amount": float(existing.compensation_amount),
+                    "status": existing.status
+                }
+            }, status=400)
+        
+        compensation = ShopCompensation.objects.create(
+            shop_id=shop_id,
+            order_id=order_id,
+            voucher_id=voucher_id,
+            discount_amount=Decimal(str(amount)),
+            compensation_amount=Decimal(str(amount)),
+            status='pending',
+            receipt_image=receipt,
+            notes=notes,
+            processed_by=user
+        )
+        
+        return Response({
+            "success": True,
+            "compensation": {
+                "id": str(compensation.id),
+                "amount": float(compensation.compensation_amount),
+                "status": compensation.status,
+                "created_at": compensation.processed_at.isoformat()
+            }
+        })
+    
+    @action(detail=False, methods=['get'], url_path='check-status')
+    def check_status(self, request):
+        order_id = request.GET.get('order_id')
+        shop_id = request.GET.get('shop_id')
+        
+        if not order_id or not shop_id:
+            return Response({"error": "order_id and shop_id required"}, status=400)
+        
+        compensation = ShopCompensation.objects.filter(
+            order_id=order_id, 
+            shop_id=shop_id
+        ).first()
+        
+        return Response({
+            "compensated": compensation is not None,
+            "compensation": {
+                "id": str(compensation.id),
+                "amount": float(compensation.compensation_amount),
+                "status": compensation.status,
+                "created_at": compensation.processed_at.isoformat()
+            } if compensation else None
+        })
+
+
 class AdminRefunds(viewsets.ViewSet):
 
     @action(detail=True, methods=['get'], url_path='approved-details')
@@ -56520,3 +56665,5 @@ class ShopFollowersView(APIView):
             'followers': followers_data
         })
         
+
+

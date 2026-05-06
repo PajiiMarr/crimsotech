@@ -31,6 +31,10 @@ import {
   ArrowLeft,
   AlertCircle,
   Ticket,
+  Eye,
+  ArrowUpDown,
+  Upload,
+  X,
 } from "lucide-react";
 import { useToast } from "~/hooks/use-toast";
 import {
@@ -43,6 +47,28 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "~/components/ui/alert-dialog";
+import { DataTable } from "~/components/ui/data-table";
+import type { ColumnDef } from "@tanstack/react-table";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "~/components/ui/dialog";
+import {
+  Drawer,
+  DrawerClose,
+  DrawerContent,
+  DrawerDescription,
+  DrawerFooter,
+  DrawerHeader,
+  DrawerTitle,
+} from "~/components/ui/drawer";
+import { useIsMobile } from "~/hooks/use-mobile";
+import { Input } from "~/components/ui/input";
+import { Label } from "~/components/ui/label";
+import { Textarea } from "~/components/ui/textarea";
 
 export function meta(): Route.MetaDescriptors {
   return [
@@ -52,15 +78,28 @@ export function meta(): Route.MetaDescriptors {
   ];
 }
 
+interface ShopInfo {
+  id: string;
+  name: string;
+  status?: string;
+  refund_status?: string;
+  refund_expire_date?: string | null;
+}
+
 interface VoucherUsage {
   id: string;
   order_id: string;
+  order_status?: string;
+  shop_statuses?: Record<string, string>;
+  shop_refund_statuses?: Record<string, string>;
+  shop_refund_expire_dates?: Record<string, string | null>;
   user_id: string;
   user_name: string;
   discount_amount: number;
   used_at: string;
   order_total: number;
   final_total: number;
+  shops?: ShopInfo[];
 }
 
 interface Voucher {
@@ -74,6 +113,7 @@ interface Voucher {
   } | null;
   discount_type: "percentage" | "fixed";
   value: number;
+  capped_at?: number | null;
   minimum_spend: number;
   maximum_usage: number;
   usage_count: number;
@@ -93,6 +133,15 @@ interface Voucher {
 interface LoaderData {
   user: any;
   userId: string | null;
+}
+
+interface PaymentMethod {
+  payment_id: string;
+  payment_method: string;
+  account_name: string;
+  account_number: string;
+  bank_name?: string;
+  is_default: boolean;
 }
 
 export async function loader({
@@ -125,6 +174,7 @@ export default function ViewVoucher({
   const { user: authUser, userId } = loaderData;
   const { voucher_id } = useParams();
   const navigate = useNavigate();
+  const isMobile = useIsMobile();
   const [voucher, setVoucher] = useState<Voucher | null>(null);
   const [usages, setUsages] = useState<VoucherUsage[]>([]);
   const [loading, setLoading] = useState(true);
@@ -132,6 +182,21 @@ export default function ViewVoucher({
   const [copied, setCopied] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [selectedUsage, setSelectedUsage] = useState<VoucherUsage | null>(null);
+  const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
+  const [isCompensationModalOpen, setIsCompensationModalOpen] = useState(false);
+  const [selectedShop, setSelectedShop] = useState<{
+    id: string;
+    name: string;
+    discount_amount: number;
+    refund_status: string;
+    refund_expire_date: string | null;
+  } | null>(null);
+  const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
+  const [receiptFile, setReceiptFile] = useState<File | null>(null);
+  const [receiptPreview, setReceiptPreview] = useState<string | null>(null);
+  const [compensationNote, setCompensationNote] = useState("");
+  const [submittingCompensation, setSubmittingCompensation] = useState(false);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -153,7 +218,17 @@ export default function ViewVoucher({
           { headers },
         );
         setVoucher(response.data.voucher);
-        setUsages(response.data.usages || []);
+        
+        // Ensure shops have refund_status and refund_expire_date
+        const usagesData = (response.data.usages || []).map((usage: any) => ({
+          ...usage,
+          shops: (usage.shops || []).map((shop: any) => ({
+            ...shop,
+            refund_status: shop.refund_status || "active",
+            refund_expire_date: shop.refund_expire_date || null,
+          })),
+        }));
+        setUsages(usagesData);
       } catch (err: any) {
         console.error("Error fetching voucher:", err);
         setError(err.response?.data?.error || "Failed to load voucher data");
@@ -256,6 +331,571 @@ export default function ViewVoucher({
       return `${voucher.value}% OFF`;
     }
     return `₱${voucher.value.toLocaleString()} OFF`;
+  };
+
+  const fetchShopPaymentMethods = async (shopId: string) => {
+    try {
+      const response = await AxiosInstance.get(`/user-payment-details/`, {
+        headers: { "X-User-Id": userId || "" }
+      });
+      if (response.data.results) {
+        setPaymentMethods(response.data.results);
+      } else {
+        setPaymentMethods([]);
+      }
+    } catch (error) {
+      console.error("Error fetching payment methods:", error);
+      setPaymentMethods([]);
+    }
+  };
+
+  const handleCompensation = async (shop: ShopInfo, discountAmount: number) => {
+    setSelectedShop({
+      id: shop.id,
+      name: shop.name,
+      discount_amount: discountAmount,
+      refund_status: shop.refund_status || "active",
+      refund_expire_date: shop.refund_expire_date || null,
+    });
+    await fetchShopPaymentMethods(shop.id);
+    setIsCompensationModalOpen(true);
+  };
+
+  const handleReceiptUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setReceiptFile(file);
+      const previewUrl = URL.createObjectURL(file);
+      setReceiptPreview(previewUrl);
+    }
+  };
+
+  const handleRemoveReceipt = () => {
+    setReceiptFile(null);
+    setReceiptPreview(null);
+  };
+
+  const handleSubmitCompensation = async () => {
+    if (!selectedShop || !receiptFile) {
+      toast({
+        title: "Error",
+        description: "Please upload a receipt image",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setSubmittingCompensation(true);
+    try {
+      const formData = new FormData();
+      formData.append("shop_id", selectedShop.id);
+      formData.append("order_id", selectedUsage?.order_id || "");
+      formData.append("voucher_id", voucher?.id || "");
+      formData.append("amount", selectedShop.discount_amount.toString());
+      formData.append("note", compensationNote);
+      formData.append("receipt", receiptFile);
+
+      const response = await AxiosInstance.post("/shop-compensation/create-compensation/", formData, {
+        headers: {
+          "X-User-Id": userId || "",
+          "Content-Type": "multipart/form-data",
+        },
+      });
+
+      if (response.data.success) {
+        toast({
+          title: "Success",
+          description: "Compensation processed successfully",
+        });
+        setIsCompensationModalOpen(false);
+        setReceiptFile(null);
+        setReceiptPreview(null);
+        setCompensationNote("");
+        setSelectedShop(null);
+      } else {
+        toast({
+          title: "Error",
+          description: response.data.error || "Failed to process compensation",
+          variant: "destructive",
+        });
+      }
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.response?.data?.error || "Failed to process compensation",
+        variant: "destructive",
+      });
+    } finally {
+      setSubmittingCompensation(false);
+    }
+  };
+
+  // Check if refund is expired
+  const isRefundExpired = (refundExpireDate: string | null, refundStatus: string) => {
+    if (refundStatus === "expired") return true;
+    if (refundExpireDate) {
+      const expireDate = new Date(refundExpireDate);
+      const today = new Date();
+      return expireDate < today;
+    }
+    return false;
+  };
+
+  // Usage History Columns with Compensation Action
+  const usageColumns: ColumnDef<VoucherUsage>[] = [
+    {
+      accessorKey: "user_name",
+      header: ({ column }) => (
+        <Button
+          variant="ghost"
+          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          className="p-0 h-8"
+        >
+          User
+          <ArrowUpDown className="ml-2 h-4 w-4" />
+        </Button>
+      ),
+      cell: ({ row }) => (
+        <div className="font-medium">
+          {row.getValue("user_name") || "Unknown"}
+        </div>
+      ),
+    },
+    {
+      accessorKey: "order_id",
+      header: "Order ID",
+      cell: ({ row }) => {
+        const orderId = row.getValue("order_id");
+        const orderIdStr = orderId ? String(orderId) : "";
+        return (
+          <code className="text-xs bg-muted px-1 py-0.5 rounded">
+            #{orderIdStr.slice(0, 8)}...
+          </code>
+        );
+      },
+    },
+    {
+      accessorKey: "discount_amount",
+      header: ({ column }) => (
+        <Button
+          variant="ghost"
+          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          className="p-0 h-8"
+        >
+          Discount
+          <ArrowUpDown className="ml-2 h-4 w-4" />
+        </Button>
+      ),
+      cell: ({ row }) => {
+        const amount = row.getValue("discount_amount") as number;
+        return (
+          <span className="text-green-600">
+            -₱{(amount || 0).toLocaleString()}
+          </span>
+        );
+      },
+    },
+    {
+      accessorKey: "order_total",
+      header: ({ column }) => (
+        <Button
+          variant="ghost"
+          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          className="p-0 h-8"
+        >
+          Final Total
+          <ArrowUpDown className="ml-2 h-4 w-4" />
+        </Button>
+      ),
+      cell: ({ row }) => {
+        const finalTotal = row.getValue("order_total") as number;
+        return <span>₱{(finalTotal || 0).toLocaleString()}</span>;
+      },
+    },
+    {
+      accessorKey: "used_at",
+      header: ({ column }) => (
+        <Button
+          variant="ghost"
+          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          className="p-0 h-8"
+        >
+          Used Date
+          <ArrowUpDown className="ml-2 h-4 w-4" />
+        </Button>
+      ),
+      cell: ({ row }) => {
+        const date = row.getValue("used_at") as string;
+        return (
+          <span>{date ? new Date(date).toLocaleDateString() : "N/A"}</span>
+        );
+      },
+    },
+    {
+      id: "actions",
+      header: "Actions",
+      cell: ({ row }) => {
+        const usage = row.original;
+        const hasExpiredShop = usage.shops?.some(
+          (shop) => isRefundExpired(shop.refund_expire_date || null, shop.refund_status || "active")
+        );
+        return (
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 w-8 p-0"
+              onClick={() => {
+                setSelectedUsage(usage);
+                setIsDetailModalOpen(true);
+              }}
+            >
+              <Eye className="h-4 w-4" />
+            </Button>
+            {hasExpiredShop && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs border-orange-500 text-orange-600 hover:bg-orange-50"
+                onClick={() => {
+                  const expiredShop = usage.shops?.find(
+                    (shop) => isRefundExpired(shop.refund_expire_date || null, shop.refund_status || "active")
+                  );
+                  if (expiredShop) {
+                    handleCompensation(expiredShop, usage.discount_amount);
+                  }
+                }}
+              >
+                <Clock className="h-3 w-3 mr-1" />
+                Compensate
+              </Button>
+            )}
+          </div>
+        );
+      },
+    },
+  ];
+
+  // Render Detail Modal/Drawer
+  const renderDetailModal = () => {
+    if (!selectedUsage) return null;
+
+    const orderIdStr = selectedUsage.order_id
+      ? String(selectedUsage.order_id)
+      : "";
+    const orderIdDisplay = orderIdStr ? `#${orderIdStr.slice(0, 8)}...` : "N/A";
+
+    const hasExpiredShop = selectedUsage.shops?.some(
+      (shop) => isRefundExpired(shop.refund_expire_date || null, shop.refund_status || "active")
+    );
+
+    const content = (
+      <div className="space-y-4">
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="text-sm text-muted-foreground">Order ID</label>
+            <p className="font-mono text-sm font-medium">
+              {orderIdStr || "N/A"}
+            </p>
+          </div>
+          <div>
+            <label className="text-sm text-muted-foreground">Customer</label>
+            <p className="font-medium">
+              {selectedUsage.user_name || "Unknown"}
+            </p>
+          </div>
+        </div>
+
+        <Separator />
+
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="text-sm text-muted-foreground">Order Total</label>
+            <p className="text-lg font-semibold">
+              ₱{(selectedUsage.final_total || 0).toLocaleString()}
+            </p>
+          </div>
+          <div>
+            <label className="text-sm text-muted-foreground">
+              Discount Applied
+            </label>
+            <p className="text-lg font-semibold text-green-600">
+              -₱{(selectedUsage.discount_amount || 0).toLocaleString()}
+            </p>
+          </div>
+        </div>
+
+        <div>
+          <label className="text-sm text-muted-foreground">Final Total</label>
+          <p className="text-xl font-bold">
+            ₱{(selectedUsage.order_total || 0).toLocaleString()}
+          </p>
+        </div>
+
+        <Separator />
+
+        <div>
+          <label className="text-sm text-muted-foreground">Used At</label>
+          <p>
+            {selectedUsage.used_at
+              ? new Date(selectedUsage.used_at).toLocaleString()
+              : "N/A"}
+          </p>
+        </div>
+
+        {selectedUsage.shops && selectedUsage.shops.length > 0 && (
+          <>
+            <Separator />
+            <div>
+              <label className="text-sm text-muted-foreground">Shops</label>
+              <div className="space-y-2 mt-1">
+                {selectedUsage.shops.map((shop) => {
+                  const expired = isRefundExpired(shop.refund_expire_date || null, shop.refund_status || "active");
+                  return (
+                    <div key={shop.id} className="flex items-center justify-between p-2 bg-muted/30 rounded-lg">
+                      <div className="flex items-center gap-2">
+                        <Store className="w-4 h-4 text-muted-foreground" />
+                        <span className="text-sm font-medium">{shop.name}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {expired ? (
+                          <>
+                            <Badge variant="destructive" className="text-xs">
+                              Refund Expired
+                            </Badge>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 text-xs border-orange-500 text-orange-600"
+                              onClick={() => handleCompensation(shop, selectedUsage.discount_amount)}
+                            >
+                              <Clock className="h-3 w-3 mr-1" />
+                              Compensate
+                            </Button>
+                          </>
+                        ) : (
+                          <Badge variant="secondary" className="text-xs bg-green-100 text-green-700">
+                            Refund Active
+                          </Badge>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    );
+
+    if (isMobile) {
+      return (
+        <Drawer open={isDetailModalOpen} onOpenChange={setIsDetailModalOpen}>
+          <DrawerContent>
+            <DrawerHeader>
+              <DrawerTitle>Usage Details</DrawerTitle>
+              <DrawerDescription>Order ID: {orderIdDisplay}</DrawerDescription>
+            </DrawerHeader>
+            <div className="px-4 pb-4">{content}</div>
+            <DrawerFooter>
+              <DrawerClose asChild>
+                <Button variant="outline">Close</Button>
+              </DrawerClose>
+            </DrawerFooter>
+          </DrawerContent>
+        </Drawer>
+      );
+    }
+
+    return (
+      <Dialog open={isDetailModalOpen} onOpenChange={setIsDetailModalOpen}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>Usage Details</DialogTitle>
+            <DialogDescription>Order ID: {orderIdDisplay}</DialogDescription>
+          </DialogHeader>
+          {content}
+        </DialogContent>
+      </Dialog>
+    );
+  };
+
+  // Render Compensation Modal
+  const renderCompensationModal = () => {
+    if (!selectedShop) return null;
+
+    const content = (
+      <div className="space-y-4">
+        {/* Shop Info */}
+        <div className="p-3 bg-orange-50 rounded-lg flex items-center gap-3">
+          <Store className="w-5 h-5 text-orange-600" />
+          <div>
+            <p className="font-semibold text-gray-900">{selectedShop.name}</p>
+            <p className="text-sm text-gray-500">Shop ID: {selectedShop.id}</p>
+          </div>
+        </div>
+
+        {/* Discount Amount */}
+        <div className="p-3 bg-green-50 rounded-lg">
+          <p className="text-sm text-gray-600">Compensation Amount</p>
+          <p className="text-2xl font-bold text-green-600">
+            ₱{selectedShop.discount_amount.toLocaleString()}
+          </p>
+          <p className="text-xs text-gray-500 mt-1">Voucher discount applied to this order</p>
+        </div>
+
+        {/* Refund Status Warning */}
+        <div className="p-3 bg-red-50 rounded-lg flex items-start gap-2">
+          <AlertCircle className="w-4 h-4 text-red-600 mt-0.5" />
+          <div>
+            <p className="text-sm font-medium text-red-700">Refund Period Expired</p>
+            <p className="text-xs text-red-600">
+              The refund period for this shop has ended. You can still process compensation.
+            </p>
+          </div>
+        </div>
+
+        {/* Payment Methods */}
+        <div>
+          <Label className="text-sm font-medium mb-2 block">Shop Payment Details</Label>
+          {paymentMethods.length > 0 ? (
+            <div className="space-y-2 max-h-48 overflow-y-auto">
+              {paymentMethods.map((method) => (
+                <div key={method.payment_id} className="p-3 border rounded-lg bg-gray-50">
+                  <div className="flex items-center gap-2 mb-1">
+                    {method.payment_method === "bank" ? (
+                      <div className="w-6 h-6 bg-blue-100 rounded-full flex items-center justify-center">
+                        <span className="text-xs text-blue-600">B</span>
+                      </div>
+                    ) : (
+                      <div className="w-6 h-6 bg-purple-100 rounded-full flex items-center justify-center">
+                        <span className="text-xs text-purple-600">E</span>
+                      </div>
+                    )}
+                    <span className="font-medium text-sm capitalize">{method.payment_method}</span>
+                    {method.is_default && (
+                      <Badge variant="secondary" className="text-xs">Default</Badge>
+                    )}
+                  </div>
+                  <p className="text-sm text-gray-700">{method.account_name}</p>
+                  <p className="text-xs text-gray-500 font-mono">{method.account_number}</p>
+                  {method.bank_name && (
+                    <p className="text-xs text-gray-500">{method.bank_name}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="p-3 bg-yellow-50 rounded-lg text-center">
+              <p className="text-sm text-yellow-700">No payment method configured</p>
+              <p className="text-xs text-yellow-600 mt-1">The shop owner needs to add a payment method first</p>
+            </div>
+          )}
+        </div>
+
+        {/* Receipt Upload */}
+        <div>
+          <Label className="text-sm font-medium mb-2 block">Upload Receipt *</Label>
+          {!receiptPreview ? (
+            <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100 border-gray-300">
+              <div className="flex flex-col items-center justify-center pt-5 pb-6">
+                <Upload className="w-8 h-8 text-gray-400 mb-2" />
+                <p className="mb-2 text-sm text-gray-500">Click to upload receipt</p>
+                <p className="text-xs text-gray-400">PNG, JPG up to 5MB</p>
+              </div>
+              <input
+                type="file"
+                className="hidden"
+                accept="image/*"
+                onChange={handleReceiptUpload}
+              />
+            </label>
+          ) : (
+            <div className="relative">
+              <img
+                src={receiptPreview}
+                alt="Receipt preview"
+                className="w-full h-48 object-cover rounded-lg border"
+              />
+              <button
+                onClick={handleRemoveReceipt}
+                className="absolute top-2 right-2 p-1 bg-red-500 text-white rounded-full hover:bg-red-600"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Notes */}
+        <div>
+          <Label className="text-sm font-medium mb-2 block">Notes (Optional)</Label>
+          <Textarea
+            placeholder="Add any additional information about this compensation..."
+            value={compensationNote}
+            onChange={(e) => setCompensationNote(e.target.value)}
+            rows={3}
+          />
+        </div>
+      </div>
+    );
+
+    if (isMobile) {
+      return (
+        <Drawer open={isCompensationModalOpen} onOpenChange={setIsCompensationModalOpen}>
+          <DrawerContent>
+            <DrawerHeader>
+              <DrawerTitle>Process Compensation</DrawerTitle>
+              <DrawerDescription>
+                Process compensation for expired refund
+              </DrawerDescription>
+            </DrawerHeader>
+            <div className="px-4 pb-4">{content}</div>
+            <DrawerFooter>
+              <div className="flex gap-2">
+                <DrawerClose asChild>
+                  <Button variant="outline" className="flex-1">Cancel</Button>
+                </DrawerClose>
+                <Button
+                  className="flex-1 bg-orange-600 hover:bg-orange-700"
+                  onClick={handleSubmitCompensation}
+                  disabled={submittingCompensation || !receiptFile}
+                >
+                  {submittingCompensation ? "Processing..." : "Process Compensation"}
+                </Button>
+              </div>
+            </DrawerFooter>
+          </DrawerContent>
+        </Drawer>
+      );
+    }
+
+    return (
+      <Dialog open={isCompensationModalOpen} onOpenChange={setIsCompensationModalOpen}>
+        <DialogContent className="sm:max-w-[500px] max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Process Compensation</DialogTitle>
+            <DialogDescription>
+              Process compensation for expired refund
+            </DialogDescription>
+          </DialogHeader>
+          {content}
+          <div className="flex gap-2 pt-4">
+            <Button variant="outline" className="flex-1" onClick={() => setIsCompensationModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              className="flex-1 bg-orange-600 hover:bg-orange-700"
+              onClick={handleSubmitCompensation}
+              disabled={submittingCompensation || !receiptFile}
+            >
+              {submittingCompensation ? "Processing..." : "Process Compensation"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    );
   };
 
   if (loading) {
@@ -398,6 +1038,11 @@ export default function ViewVoucher({
                   <p className="text-xl sm:text-2xl font-bold mt-1">
                     {getDiscountDisplay()}
                   </p>
+                  {voucher.capped_at && voucher.capped_at > 0 && (
+                    <p className="text-xs text-muted-foreground mt-2">
+                      Capped at: ₱{voucher.capped_at.toLocaleString()}
+                    </p>
+                  )}
                   {voucher.minimum_spend > 0 && (
                     <p className="text-xs text-muted-foreground mt-2">
                       Min spend: ₱{voucher.minimum_spend.toLocaleString()}
@@ -519,6 +1164,16 @@ export default function ViewVoucher({
                     {getDiscountDisplay()}
                   </p>
                 </div>
+                {voucher.capped_at && voucher.capped_at > 0 && (
+                  <div>
+                    <label className="text-sm text-muted-foreground">
+                      Maximum Discount Cap
+                    </label>
+                    <p className="font-medium">
+                      ₱{voucher.capped_at.toLocaleString()}
+                    </p>
+                  </div>
+                )}
                 <Separator />
                 <div>
                   <label className="text-sm text-muted-foreground">
@@ -611,63 +1266,14 @@ export default function ViewVoucher({
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                {usages.length > 0 ? (
-                  <div className="space-y-4">
-                    {usages.map((usage) => (
-                      <div
-                        key={usage.id}
-                        className="border rounded-lg p-4 hover:bg-muted/50 transition-colors"
-                      >
-                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <User className="w-4 h-4 text-muted-foreground" />
-                              <span className="font-medium">
-                                {usage.user_name}
-                              </span>
-                            </div>
-                            <div className="text-sm text-muted-foreground mt-1">
-                              Order ID: #{usage.order_id}
-                            </div>
-                            <div className="text-xs text-muted-foreground mt-1">
-                              Used on:{" "}
-                              {new Date(usage.used_at).toLocaleString()}
-                            </div>
-                          </div>
-                          <div className="text-right">
-                            <div className="text-sm">
-                              <span className="text-muted-foreground">
-                                Original:{" "}
-                              </span>
-                              <span className="line-through">
-                                ₱{usage.order_total.toLocaleString()}
-                              </span>
-                            </div>
-                            <div className="text-sm">
-                              <span className="text-muted-foreground">
-                                Discount:{" "}
-                              </span>
-                              <span className="text-green-600">
-                                -₱{usage.discount_amount.toLocaleString()}
-                              </span>
-                            </div>
-                            <div className="font-semibold mt-1">
-                              Final: ₱{usage.final_total.toLocaleString()}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="text-center py-12 text-muted-foreground">
-                    <ShoppingBag className="h-12 w-12 mx-auto mb-3 text-gray-300" />
-                    <p>No usage history for this voucher</p>
-                    <p className="text-sm mt-1">
-                      This voucher hasn't been used yet
-                    </p>
-                  </div>
-                )}
+                <DataTable
+                  columns={usageColumns}
+                  data={usages}
+                  searchConfig={{
+                    column: "user_name",
+                    placeholder: "Search by user...",
+                  }}
+                />
               </CardContent>
             </Card>
 
@@ -695,7 +1301,7 @@ export default function ViewVoucher({
                       <p className="text-2xl font-bold text-green-600">
                         ₱
                         {usages
-                          .reduce((sum, u) => sum + u.discount_amount, 0)
+                          .reduce((sum, u) => sum + (u.discount_amount || 0), 0)
                           .toLocaleString()}
                       </p>
                     </div>
@@ -706,6 +1312,12 @@ export default function ViewVoucher({
           </div>
         </div>
       </div>
+
+      {/* Detail Modal/Drawer */}
+      {renderDetailModal()}
+
+      {/* Compensation Modal/Drawer */}
+      {renderCompensationModal()}
 
       {/* Delete Confirmation Dialog */}
       <AlertDialog

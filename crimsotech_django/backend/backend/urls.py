@@ -85,6 +85,7 @@ router.register(r'rider-proof', RiderProofViewSet, basename='rider-proof')
 router.register(r'rider-profile', RiderProfileViewSet, basename='rider-profile')
 router.register(r'conversation', ConversationViewSet, basename='conversation')
 router.register(r'wallet', UserWalletViewSet, basename='wallet')
+router.register(r'shop-compensation', ShopCompensationViewSet, basename='shop-compensation')
 
 
 urlpatterns = [
