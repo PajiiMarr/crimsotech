@@ -27408,6 +27408,7 @@ class CheckoutOrder(viewsets.ViewSet):
                     "name": voucher.name,
                     "discount_type": voucher.discount_type,
                     "value": float(voucher.value),
+                    "capped_at": float(voucher.capped_at) if voucher.capped_at else None,  # ADD THIS
                     "minimum_spend": float(voucher.minimum_spend),
                     "maximum_usage": voucher.maximum_usage,
                     "usage_count": total_usage_count,
@@ -27466,10 +27467,23 @@ class CheckoutOrder(viewsets.ViewSet):
 
         if voucher.discount_type == 'percentage':
             discount = subtotal * (voucher_value / Decimal('100'))
-            return discount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
         elif voucher.discount_type == 'fixed':
-            return min(voucher_value, subtotal).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-        return Decimal('0')
+            discount = voucher_value
+        else:
+            discount = Decimal('0')
+        
+        # Apply cap if set
+        if voucher.capped_at and voucher.capped_at > 0:
+            cap_amount = Decimal(str(voucher.capped_at))
+            if discount > cap_amount:
+                discount = cap_amount
+        
+        # Ensure discount doesn't exceed subtotal
+        if discount > subtotal:
+            discount = subtotal
+        
+        return discount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+
 
     def _decrease_stock_for_order(self, order):
         """Decrease stock for all items in an order"""
@@ -28122,6 +28136,7 @@ class CheckoutOrder(viewsets.ViewSet):
                     "name": voucher.name,
                     "discount_type": voucher.discount_type,
                     "value": float(voucher.value),
+                    "capped_at": float(voucher.capped_at) if voucher.capped_at else None,  # ADD THIS
                     "minimum_spend": float(voucher.minimum_spend),
                     "maximum_usage": voucher.maximum_usage,
                     "usage_count": total_usage_count,
@@ -28255,8 +28270,7 @@ class CheckoutOrder(viewsets.ViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            # --- Collect all cart items for even discount distribution ---
-            all_cart_items_list = []
+            # --- Collect all cart items for discount distribution ---
             shop_item_totals = {}
             shop_products = {}
             total_cart_items_count = 0
@@ -28273,18 +28287,6 @@ class CheckoutOrder(viewsets.ViewSet):
                 price = Decimal(str(direct_variant.price)) if direct_variant.price else Decimal('0')
                 subtotal = price * direct_quantity
                 total_cart_items_count = 1
-                
-                # Store as a single cart item for discount calculation
-                all_cart_items_list.append({
-                    'shop_id': str(direct_product.shop.id) if direct_product.shop else None,
-                    'line_total': subtotal,
-                    'product': direct_product,
-                    'variant': direct_variant,
-                    'quantity': direct_quantity,
-                    'price': price,
-                    'is_direct': True,
-                    'cart_item': None
-                })
                 
                 if direct_product.shop:
                     shop_id = str(direct_product.shop.id)
@@ -28354,18 +28356,6 @@ class CheckoutOrder(viewsets.ViewSet):
                             'line_total': line_total,
                             'is_direct': False
                         })
-                    
-                    # Add to all cart items list for discount calculation
-                    all_cart_items_list.append({
-                        'shop_id': shop_id if cart_item.product and cart_item.product.shop else (seller_id if cart_item.product and cart_item.product.customer else None),
-                        'line_total': line_total,
-                        'cart_item': cart_item,
-                        'product': cart_item.product,
-                        'variant': cart_item.variant,
-                        'quantity': cart_item.quantity,
-                        'price': price,
-                        'is_direct': False
-                    })
 
                     # Stock validation
                     if cart_item.variant:
@@ -28385,9 +28375,9 @@ class CheckoutOrder(viewsets.ViewSet):
                         "details": stock_validation_errors
                     }, status=status.HTTP_400_BAD_REQUEST)
 
-            # --- Voucher discount calculation - EVEN SPLIT ACROSS ALL CART ITEMS ---
+            # --- Voucher discount calculation - PROPORTIONAL BY SHOP SUBTOTAL ---
             discount_amount = Decimal('0')
-            discount_per_cart_item = {}  # Store discount per cart item ID
+            discount_per_shop = {}  # Store discount per shop (proportional)
             voucher = None
             current_date = timezone.now().date()
 
@@ -28418,26 +28408,22 @@ class CheckoutOrder(viewsets.ViewSet):
                     
                     discount_amount = self._calculate_discount(voucher, subtotal)
                     
-                    # Split discount evenly across all cart items
-                    if total_cart_items_count > 0 and discount_amount > 0:
-                        even_discount_per_item = discount_amount / Decimal(str(total_cart_items_count))
+                    # Split discount PROPORTIONALLY by shop subtotal (PER SHOP, not per item)
+                    if discount_amount > 0 and shop_item_totals:
+                        total_subtotal = subtotal
+                        for shop_id, shop_total in shop_item_totals.items():
+                            proportion = shop_total / total_subtotal
+                            shop_discount = (discount_amount * proportion).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                            discount_per_shop[shop_id] = shop_discount
                         
-                        for idx, item in enumerate(all_cart_items_list):
-                            item_discount = even_discount_per_item.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-                            
-                            # Use cart_item object as key if available, otherwise use index for direct checkout
-                            if item['cart_item']:
-                                discount_per_cart_item[str(item['cart_item'].id)] = item_discount
-                            else:
-                                discount_per_cart_item[f"direct_{idx}"] = item_discount
-                        
-                        # Handle rounding difference - add remainder to first item
-                        total_discount_applied = sum(discount_per_cart_item.values())
+                        # Handle rounding difference - add remainder to the shop with largest total
+                        total_discount_applied = sum(discount_per_shop.values())
                         if total_discount_applied != discount_amount:
                             difference = discount_amount - total_discount_applied
-                            first_key = list(discount_per_cart_item.keys())[0]
-                            discount_per_cart_item[first_key] += difference.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-                            
+                            # Find shop with largest total to absorb remaining
+                            largest_shop = max(shop_item_totals.items(), key=lambda x: x[1])[0]
+                            discount_per_shop[largest_shop] += difference.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                        
                 except Voucher.DoesNotExist:
                     return Response(
                         {"error": "Invalid or expired voucher"},
@@ -28536,7 +28522,7 @@ class CheckoutOrder(viewsets.ViewSet):
                     for shop_id in unique_shops:
                         transaction_fee_per_shop[shop_id] = even_split.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
                     
-                    # Handle rounding difference (add remainder to first shop)
+                    # Handle rounding difference
                     total_from_split = sum(transaction_fee_per_shop.values())
                     if total_from_split != transaction_fee:
                         difference = transaction_fee - total_from_split
@@ -28573,8 +28559,8 @@ class CheckoutOrder(viewsets.ViewSet):
             
             if discount_amount > 0:
                 order.metadata['discount_amount'] = float(discount_amount)
-                order.metadata['discount_note'] = f"Discount of ₱{float(discount_amount):.2f} applied evenly across {total_cart_items_count} items"
-                order.metadata['discount_per_cart_item'] = {k: float(v) for k, v in discount_per_cart_item.items()}
+                order.metadata['discount_note'] = f"Discount of ₱{float(discount_amount):.2f} applied proportionally across shops based on subtotal"
+                order.metadata['discount_per_shop'] = {k: float(v) for k, v in discount_per_shop.items()}
             
             if shipping_method.lower() == "pickup" and 'cash' in payment_method.lower() and pickup_date:
                 order.metadata['pickup_date'] = pickup_date
@@ -28584,21 +28570,16 @@ class CheckoutOrder(viewsets.ViewSet):
             cart_item_ids = []
             checkout_items_response = []
 
-            # --- Create Checkout records: ONE checkout per cart item ---
+            # --- Create Checkout records ---
             if is_direct_checkout:
-                # Direct product checkout (single item)
                 shop_id = str(direct_product.shop.id) if direct_product.shop else None
                 
                 product_total = subtotal
                 shipping_fee_share = Decimal(str(shipping_fees_breakdown.get(shop_id, 0))) if shop_id else Decimal('0')
                 transaction_fee_share = transaction_fee_per_shop.get(shop_id, Decimal('0'))
                 
-                # Get discount for this direct checkout item
-                discount_share = Decimal('0')
-                for key, disc in discount_per_cart_item.items():
-                    if key.startswith('direct_'):
-                        discount_share = disc
-                        break
+                # Get discount for this shop (proportional)
+                discount_share = discount_per_shop.get(shop_id, Decimal('0'))
                 
                 # Total for this checkout item
                 item_total = product_total + shipping_fee_share + transaction_fee_share - discount_share
@@ -28671,11 +28652,12 @@ class CheckoutOrder(viewsets.ViewSet):
                 })
                 
             else:
-                # Create ONE Checkout per cart item with even discount distribution
+                # Create ONE Checkout per cart item with proportional discount per shop
                 for shop_id, products in shop_products.items():
                     # Get shop-level fees
                     shop_shipping_fee = Decimal(str(shipping_fees_breakdown.get(shop_id, 0))) if shop_id else Decimal('0')
                     shop_transaction_fee_share = transaction_fee_per_shop.get(shop_id, Decimal('0'))
+                    shop_discount = discount_per_shop.get(shop_id, Decimal('0'))
                     
                     item_distance = shops_distances.get(shop_id, {}).get('distance_km', None) if shop_id else None
                     product_count = len(products)
@@ -28700,10 +28682,11 @@ class CheckoutOrder(viewsets.ViewSet):
                             shipping_fee_share = Decimal('0')
                             transaction_fee_share = Decimal('0')
                         
-                        # Get discount for this specific cart item (evenly distributed)
-                        discount_share = Decimal('0')
-                        if cart_item and str(cart_item.id) in discount_per_cart_item:
-                            discount_share = discount_per_cart_item[str(cart_item.id)]
+                        # Distribute shop discount proportionally across items in this shop
+                        if shop_product_total > 0 and shop_discount > 0:
+                            discount_share = (shop_discount * proportion).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                        else:
+                            discount_share = Decimal('0')
                         
                         # Total for this specific cart item (checkout)
                         item_total = line_total + shipping_fee_share + transaction_fee_share - discount_share
@@ -28807,11 +28790,14 @@ class CheckoutOrder(viewsets.ViewSet):
                     fee_parts.append(f"{shop_name}: ₱{float(fee):.2f}")
                 transaction_fee_breakdown_message = f" (Split evenly among {number_of_shops} shops: {' | '.join(fee_parts)})"
             
-            # Build discount breakdown message
+            # Build discount breakdown message - proportional per shop
             discount_breakdown_message = ""
-            if discount_amount > 0 and total_cart_items_count > 0:
-                discount_per_item_amount = discount_amount / Decimal(str(total_cart_items_count))
-                discount_breakdown_message = f" Discount of ₱{float(discount_amount):.2f} split evenly across {total_cart_items_count} items (₱{float(discount_per_item_amount):.2f} per item)"
+            if discount_amount > 0 and discount_per_shop:
+                discount_parts = []
+                for shop_id, disc in discount_per_shop.items():
+                    shop_name = shops_distances.get(shop_id, {}).get('shop_name', 'Unknown Shop')
+                    discount_parts.append(f"{shop_name}: ₱{float(disc):.2f}")
+                discount_breakdown_message = f" Discount of ₱{float(discount_amount):.2f} split proportionally across shops based on subtotal: {' | '.join(discount_parts)}"
 
             response_data = {
                 "success": True,
@@ -28833,8 +28819,7 @@ class CheckoutOrder(viewsets.ViewSet):
                     for shop_id, info in shops_distances.items()
                 ],
                 "discount_applied": float(discount_amount),
-                "discount_per_item_count": total_cart_items_count,
-                "discount_per_item_amount": float(discount_amount / Decimal(str(total_cart_items_count))) if total_cart_items_count > 0 and discount_amount > 0 else 0,
+                "discount_per_shop": {k: float(v) for k, v in discount_per_shop.items()},
                 "transaction_fee": float(transaction_fee),
                 "transaction_fee_breakdown": {k: float(v) for k, v in transaction_fee_per_shop.items()},
                 "number_of_shops": number_of_shops,
@@ -28859,6 +28844,8 @@ class CheckoutOrder(viewsets.ViewSet):
                 {"error": "Failed to create order", "details": str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+            
 
     @action(detail=False, methods=['GET'], url_path='get_order_details/(?P<order_id>[^/.]+)')
     def get_order_details(self, request, order_id=None):

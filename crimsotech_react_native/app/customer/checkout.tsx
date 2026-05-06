@@ -66,6 +66,7 @@ interface Voucher {
   name: string;
   discount_type: "percentage" | "fixed";
   value: number;
+  capped_at?: number | null; // ADD THIS
   minimum_spend: number;
   shop_name: string;
   shop_id?: string | null;
@@ -250,7 +251,9 @@ export default function CheckoutPage() {
     useState(false);
   const [centerToastVisible, setCenterToastVisible] = useState(false);
   const [centerToastMessage, setCenterToastMessage] = useState("");
-  const [perShopDeliveryFees, setPerShopDeliveryFees] = useState<PerShopDeliveryFee[]>([]);
+  const [perShopDeliveryFees, setPerShopDeliveryFees] = useState<
+    PerShopDeliveryFee[]
+  >([]);
 
   const [formData, setFormData] = useState({
     agreeTerms: false,
@@ -274,10 +277,13 @@ export default function CheckoutPage() {
   const [apiDeliveryFee, setApiDeliveryFee] = useState(0);
 
   const calculateTransactionFee = useCallback((baseTotal: number) => {
+    // baseTotal should already have discount applied
+    if (baseTotal <= 0) return 0;
     const fee = baseTotal * 0.05;
     return Math.min(fee, 50);
   }, []);
 
+  // Update the useEffect that recalculates totals
   useEffect(() => {
     const baseTotal = summary.subtotal + summary.delivery - summary.discount;
     const fee = calculateTransactionFee(baseTotal);
@@ -285,12 +291,23 @@ export default function CheckoutPage() {
       ...prev,
       total: baseTotal + fee,
     }));
-  }, [summary.subtotal, summary.delivery, summary.discount, calculateTransactionFee]);
+  }, [
+    summary.subtotal,
+    summary.delivery,
+    summary.discount,
+    calculateTransactionFee,
+  ]);
 
+  // Fix the getTransactionFee function
   const getTransactionFee = useCallback(() => {
     const baseTotal = summary.subtotal + summary.delivery - summary.discount;
     return calculateTransactionFee(baseTotal);
-  }, [summary.subtotal, summary.delivery, summary.discount, calculateTransactionFee]);
+  }, [
+    summary.subtotal,
+    summary.delivery,
+    summary.discount,
+    calculateTransactionFee,
+  ]);
 
   const buildCheckoutApiParams = () => {
     const base: Record<string, any> = { user_id: userId };
@@ -309,16 +326,28 @@ export default function CheckoutPage() {
 
   const buildOrderRequestBody = (checkoutItems: CartItem[]) => {
     // Debug logs
-    console.log("🔍 [BUILD ORDER] perShopDeliveryFees:", JSON.stringify(perShopDeliveryFees));
-    console.log("🔍 [BUILD ORDER] perShopDeliveryFees length:", perShopDeliveryFees.length);
-    
-    const deliveryFeesObject = perShopDeliveryFees.reduce((acc, shop) => {
-      acc[shop.shop_id] = shop.delivery_fee;
-      return acc;
-    }, {} as Record<string, number>);
-    
-    console.log("🔍 [BUILD ORDER] deliveryFeesObject:", JSON.stringify(deliveryFeesObject));
-    
+    console.log(
+      "🔍 [BUILD ORDER] perShopDeliveryFees:",
+      JSON.stringify(perShopDeliveryFees),
+    );
+    console.log(
+      "🔍 [BUILD ORDER] perShopDeliveryFees length:",
+      perShopDeliveryFees.length,
+    );
+
+    const deliveryFeesObject = perShopDeliveryFees.reduce(
+      (acc, shop) => {
+        acc[shop.shop_id] = shop.delivery_fee;
+        return acc;
+      },
+      {} as Record<string, number>,
+    );
+
+    console.log(
+      "🔍 [BUILD ORDER] deliveryFeesObject:",
+      JSON.stringify(deliveryFeesObject),
+    );
+
     const base: Record<string, any> = {
       user_id: userId,
       shipping_address_id: formData.selectedAddressId,
@@ -326,7 +355,7 @@ export default function CheckoutPage() {
       shipping_method: formData.shippingMethod,
       voucher_id: appliedVoucher?.id || null,
       remarks: formData.remarks.substring(0, 500) || null,
-      delivery_fees_breakdown: deliveryFeesObject
+      delivery_fees_breakdown: deliveryFeesObject,
     };
     if (cartId) {
       base.cart_id = cartId;
@@ -346,7 +375,7 @@ export default function CheckoutPage() {
     if (!userId || !hasValidEntry) {
       setLoading(false);
       setError(
-        userId ? "No items selected for checkout" : "Please login to checkout"
+        userId ? "No items selected for checkout" : "Please login to checkout",
       );
       return;
     }
@@ -355,18 +384,21 @@ export default function CheckoutPage() {
       setError(null);
       const response = await AxiosInstance.get(
         "/checkout-order/get_checkout_items/",
-        { params: buildCheckoutApiParams() }
+        { params: buildCheckoutApiParams() },
       );
 
-      console.log("🔍 [FETCH] Full API Response:", JSON.stringify(response.data, null, 2));
+      console.log(
+        "🔍 [FETCH] Full API Response:",
+        JSON.stringify(response.data, null, 2),
+      );
 
       if (response.data.success) {
         const hasOrderedItems = response.data.checkout_items?.some(
-          (item: any) => item.is_ordered === true
+          (item: any) => item.is_ordered === true,
         );
         if (hasOrderedItems) {
           setError(
-            "Some items in your cart have already been ordered. Please refresh your cart."
+            "Some items in your cart have already been ordered. Please refresh your cart.",
           );
           setCheckoutData(null);
           return;
@@ -380,7 +412,7 @@ export default function CheckoutPage() {
             subtotal: item.price * item.quantity,
             distance_km: item.distance_km,
             delivery_fee: item.delivery_fee,
-          })
+          }),
         );
 
         // ─── Extract per-shop delivery fees ───────────────────────────
@@ -389,7 +421,10 @@ export default function CheckoutPage() {
         let perShopFees: PerShopDeliveryFee[] =
           response.data.summary?.per_shop_delivery_fees || [];
 
-        console.log("🔍 [FETCH] perShopFees from summary:", JSON.stringify(perShopFees));
+        console.log(
+          "🔍 [FETCH] perShopFees from summary:",
+          JSON.stringify(perShopFees),
+        );
 
         if (perShopFees.length === 0 && response.data.seller_addresses) {
           perShopFees = (response.data.seller_addresses as ShopAddress[])
@@ -403,15 +438,21 @@ export default function CheckoutPage() {
                 `${Number(shop.distance_km || 0).toFixed(1)} km`,
               delivery_fee: shop.delivery_fee || 0,
             }));
-          console.log("🔍 [FETCH] perShopFees from seller_addresses:", JSON.stringify(perShopFees));
+          console.log(
+            "🔍 [FETCH] perShopFees from seller_addresses:",
+            JSON.stringify(perShopFees),
+          );
         }
 
-        console.log("🔍 [FETCH] Setting perShopDeliveryFees to:", JSON.stringify(perShopFees));
+        console.log(
+          "🔍 [FETCH] Setting perShopDeliveryFees to:",
+          JSON.stringify(perShopFees),
+        );
         setPerShopDeliveryFees(perShopFees);
 
         const totalDeliveryFee = perShopFees.reduce(
           (sum, shop) => sum + shop.delivery_fee,
-          0
+          0,
         );
 
         // Store the API delivery fee so we can restore it when switching to Standard Delivery
@@ -454,8 +495,7 @@ export default function CheckoutPage() {
       console.error("Error fetching checkout data:", error);
       let errorMessage = "Failed to load checkout items";
       if (error.response?.status === 404) {
-        errorMessage =
-          error.response.data?.error || "Checkout items not found";
+        errorMessage = error.response.data?.error || "Checkout items not found";
       } else if (error.response?.status === 400) {
         errorMessage = error.response.data?.error || "Invalid request";
       } else if (!error.response) {
@@ -491,21 +531,27 @@ export default function CheckoutPage() {
       try {
         const response = await AxiosInstance.get(
           "/checkout-order/get_vouchers_by_amount/",
-          { params: { user_id: userId, amount } }
+          { params: { user_id: userId, amount } },
         );
         if (response.data.success && response.data.available_vouchers) {
           setCheckoutData((prev) => {
             if (!prev) return prev;
-            return { ...prev, available_vouchers: response.data.available_vouchers };
+            return {
+              ...prev,
+              available_vouchers: response.data.available_vouchers,
+            };
           });
         }
       } catch (err: any) {
-        console.error("Error fetching vouchers by amount:", err.response?.data || err);
+        console.error(
+          "Error fetching vouchers by amount:",
+          err.response?.data || err,
+        );
       } finally {
         setLoadingVouchers(false);
       }
     },
-    [userId]
+    [userId],
   );
 
   useEffect(() => {
@@ -523,7 +569,7 @@ export default function CheckoutPage() {
   };
 
   const handleShippingMethodSelect = (
-    method: "Pickup from Store" | "Standard Delivery"
+    method: "Pickup from Store" | "Standard Delivery",
   ) => {
     setFormData((prev) => ({ ...prev, shippingMethod: method }));
 
@@ -537,7 +583,11 @@ export default function CheckoutPage() {
         formData.paymentMethod === "Cash on Pickup" ||
         formData.paymentMethod === "Cash on Delivery"
       ) {
-        setFormData((prev) => ({ ...prev, paymentMethod: methodName, shippingMethod: method }));
+        setFormData((prev) => ({
+          ...prev,
+          paymentMethod: methodName,
+          shippingMethod: method,
+        }));
       }
     }
 
@@ -572,7 +622,7 @@ export default function CheckoutPage() {
     if (!voucher.is_general && voucher.shop_name !== "All Shops") {
       return (
         checkoutData?.checkout_items.some(
-          (item) => item.shop_name === voucher.shop_name
+          (item) => item.shop_name === voucher.shop_name,
         ) || false
       );
     }
@@ -585,7 +635,7 @@ export default function CheckoutPage() {
     }
     if (!voucher.is_general && voucher.shop_name !== "All Shops") {
       const hasShop = checkoutData?.checkout_items.some(
-        (item) => item.shop_name === voucher.shop_name
+        (item) => item.shop_name === voucher.shop_name,
       );
       if (!hasShop) return `Only ${voucher.shop_name}`;
     }
@@ -602,7 +652,7 @@ export default function CheckoutPage() {
       Alert.alert(
         "Voucher Not Applicable",
         reason || "This voucher cannot be applied to your current order",
-        [{ text: "OK" }]
+        [{ text: "OK" }],
       );
       return;
     }
@@ -612,7 +662,7 @@ export default function CheckoutPage() {
       let shopId = null;
       if (!voucher.is_general && voucher.shop_name !== "All Shops") {
         const shopItem = checkoutData.checkout_items.find(
-          (item) => item.shop_name === voucher.shop_name
+          (item) => item.shop_name === voucher.shop_name,
         );
         shopId = shopItem?.shop_id || null;
       }
@@ -623,7 +673,7 @@ export default function CheckoutPage() {
           user_id: userId,
           subtotal: summary.subtotal,
           shop_id: shopId,
-        }
+        },
       );
       if (response.data.valid) {
         const validatedVoucher = response.data.voucher;
@@ -632,6 +682,10 @@ export default function CheckoutPage() {
           discountAmount = (summary.subtotal * validatedVoucher.value) / 100;
         } else {
           discountAmount = Math.min(validatedVoucher.value, summary.subtotal);
+        }
+        // Apply capped_at if present
+        if (validatedVoucher.capped_at && validatedVoucher.capped_at > 0) {
+          discountAmount = Math.min(discountAmount, validatedVoucher.capped_at);
         }
         const voucherWithDiscount = {
           ...validatedVoucher,
@@ -668,9 +722,15 @@ export default function CheckoutPage() {
   };
 
   const handlePlaceOrder = async () => {
-    console.log("🔍 [PLACE ORDER] Current perShopDeliveryFees:", JSON.stringify(perShopDeliveryFees));
-    console.log("🔍 [PLACE ORDER] perShopDeliveryFees length:", perShopDeliveryFees.length);
-    
+    console.log(
+      "🔍 [PLACE ORDER] Current perShopDeliveryFees:",
+      JSON.stringify(perShopDeliveryFees),
+    );
+    console.log(
+      "🔍 [PLACE ORDER] perShopDeliveryFees length:",
+      perShopDeliveryFees.length,
+    );
+
     if (!userId || !checkoutData) {
       Alert.alert("Error", "Please complete all required information");
       return;
@@ -681,7 +741,7 @@ export default function CheckoutPage() {
         "Voucher No Longer Applicable",
         reason ||
           "This voucher is no longer applicable to your order. Please remove it or update your cart.",
-        [{ text: "OK" }]
+        [{ text: "OK" }],
       );
       return;
     }
@@ -695,7 +755,7 @@ export default function CheckoutPage() {
     if (!formData.agreeTerms) {
       Alert.alert(
         "Required",
-        "Please agree to the Terms of Service and Privacy Policy"
+        "Please agree to the Terms of Service and Privacy Policy",
       );
       return;
     }
@@ -703,13 +763,22 @@ export default function CheckoutPage() {
     setError(null);
     try {
       const requestBody = buildOrderRequestBody(checkoutData.checkout_items);
-      console.log("🔍 [PLACE ORDER] Full request body:", JSON.stringify(requestBody, null, 2));
-      console.log("🔍 [PLACE ORDER] delivery_fees_breakdown specifically:", JSON.stringify(requestBody.delivery_fees_breakdown));
-      console.log("🔍 [PLACE ORDER] shipping_method:", requestBody.shipping_method);
-      
+      console.log(
+        "🔍 [PLACE ORDER] Full request body:",
+        JSON.stringify(requestBody, null, 2),
+      );
+      console.log(
+        "🔍 [PLACE ORDER] delivery_fees_breakdown specifically:",
+        JSON.stringify(requestBody.delivery_fees_breakdown),
+      );
+      console.log(
+        "🔍 [PLACE ORDER] shipping_method:",
+        requestBody.shipping_method,
+      );
+
       const response = await AxiosInstance.post(
         "/checkout-order/create_order/",
-        requestBody
+        requestBody,
       );
       if (response.data.success) {
         const orderId = response.data.order_id;
@@ -753,7 +822,7 @@ export default function CheckoutPage() {
   const getAllVouchers = () => {
     if (!checkoutData || !checkoutData.available_vouchers) return [];
     return checkoutData.available_vouchers.flatMap(
-      (category) => category?.vouchers ?? []
+      (category) => category?.vouchers ?? [],
     );
   };
 
@@ -761,7 +830,7 @@ export default function CheckoutPage() {
     if (!checkoutData || !checkoutData.available_vouchers) return [];
     if (activeVoucherCategory === "all") return getAllVouchers();
     const category = checkoutData.available_vouchers.find((cat: any) =>
-      cat.category.includes(activeVoucherCategory.replace("_", " "))
+      cat.category.includes(activeVoucherCategory.replace("_", " ")),
     );
     return category ? category.vouchers : [];
   };
@@ -833,7 +902,10 @@ export default function CheckoutPage() {
             Total Delivery Fee
           </Text>
           <Text style={styles.deliveryBreakdownTotalValue}>
-            ₱{formatNumber(perShopDeliveryFees.reduce((s, sh) => s + sh.delivery_fee, 0))}
+            ₱
+            {formatNumber(
+              perShopDeliveryFees.reduce((s, sh) => s + sh.delivery_fee, 0),
+            )}
           </Text>
         </View>
         {formData.shippingMethod === "Pickup from Store" && (
@@ -867,7 +939,8 @@ export default function CheckoutPage() {
   };
 
   const transactionFee = getTransactionFee();
-  const baseTotalDisplay = summary.subtotal + summary.delivery - summary.discount;
+  const baseTotalDisplay =
+    summary.subtotal + summary.delivery - summary.discount;
 
   const getDeliveryFeeDisplay = () => {
     if (formData.shippingMethod === "Pickup from Store") return "FREE";
@@ -1118,8 +1191,7 @@ export default function CheckoutPage() {
                         ₱
                         {formatNumber(
                           item.vat_amount ||
-                            item.price -
-                              (item.base_price || item.price / 1.12)
+                            item.price - (item.base_price || item.price / 1.12),
                         )}
                       </Text>
                     </View>
@@ -1632,8 +1704,16 @@ export default function CheckoutPage() {
                     voucher.discount_type === "percentage"
                       ? (summary.subtotal * voucher.value) / 100
                       : Math.min(voucher.value, summary.subtotal);
+
+                  // Apply capped_at to the displayed savings
+                  const finalSavings =
+                    voucher.capped_at && voucher.capped_at > 0
+                      ? Math.min(savings, voucher.capped_at)
+                      : savings;
+
                   const applicable = isVoucherApplicable(voucher);
                   const reason = getVoucherInapplicableReason(voucher);
+
                   return (
                     <TouchableOpacity
                       key={index}
@@ -1704,6 +1784,18 @@ export default function CheckoutPage() {
                                   Min: ₱{formatNumber(voucher.minimum_spend)}
                                 </Text>
                               </View>
+                              {voucher.capped_at && voucher.capped_at > 0 && (
+                                <View style={styles.modalVoucherDetail}>
+                                  <MaterialIcons
+                                    name="lock"
+                                    size={12}
+                                    color="#6B7280"
+                                  />
+                                  <Text style={styles.modalVoucherDetailText}>
+                                    Max: ₱{formatNumber(voucher.capped_at)}
+                                  </Text>
+                                </View>
+                              )}
                             </View>
                             {!applicable && reason && (
                               <View style={styles.notApplicableContainer}>
@@ -1732,7 +1824,17 @@ export default function CheckoutPage() {
                           </View>
                           {applicable && (
                             <Text style={styles.modalVoucherSavings}>
-                              Save ₱{formatNumber(savings)}
+                              Save ₱{formatNumber(finalSavings)}
+                              {voucher.capped_at &&
+                                voucher.capped_at > 0 &&
+                                savings > voucher.capped_at && (
+                                  <Text
+                                    style={{ fontSize: 9, color: "#DC2626" }}
+                                  >
+                                    {" "}
+                                    (capped)
+                                  </Text>
+                                )}
                             </Text>
                           )}
                           <View
