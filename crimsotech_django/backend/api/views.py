@@ -26894,6 +26894,13 @@ class SellerOrderList(viewsets.ViewSet):
                     shop_status.save()
                     print(f"✅ Reset shop status from cancelled to processing for shop {shop.name}")
                 
+                # CRITICAL FIX: If there's a declined delivery, reset shop_status from rider_assigned to processing
+                declined_delivery = Delivery.objects.filter(order=order, shop=shop, status='declined').exists()
+                if declined_delivery and shop_status.status == 'rider_assigned':
+                    print(f"♻️  Resetting shop_status from 'rider_assigned' to 'processing' due to declined delivery")
+                    shop_status.status = 'processing'
+                    shop_status.save()
+                
                 # Check if order is confirmed (after potential reset)
                 if shop_status.status != 'processing':
                     return Response({"success": False, "message": "Order must be confirmed before arranging shipment"}, status=status.HTTP_400_BAD_REQUEST)
@@ -26905,21 +26912,15 @@ class SellerOrderList(viewsets.ViewSet):
                 if active_delivery:
                     return Response({"success": False, "message": "This shop already has an active delivery in progress"}, status=status.HTTP_400_BAD_REQUEST)
                 
-                # Handle existing declined delivery for this shop - reset it instead of creating new
-                existing_delivery = Delivery.objects.filter(order=order, shop=shop).first()
-                print(f"🔍 Looking for existing delivery: order={order.order}, shop={shop.name} - Found: {existing_delivery is not None}")
-                if existing_delivery:
-                    print(f"   Existing delivery ID={existing_delivery.id}, status={existing_delivery.status}, shop_id={existing_delivery.shop_id}")
-                if existing_delivery and existing_delivery.status == 'declined':
-                    print(f"♻️  Resetting declined delivery {existing_delivery.id} for shop {shop.name}")
-                    # Reset the declined delivery to pending
-                    existing_delivery.status = 'pending'
-                    existing_delivery.rider = None
-                    existing_delivery.picked_at = None
-                    existing_delivery.delivered_at = None
-                    existing_delivery.failed_reason = None
-                    existing_delivery.save()
-                    print(f"✅ Reset declined delivery to pending for order {order.order}")
+                # IMPORTANT: DO NOT reuse declined delivery - CREATE A NEW ONE instead
+                # Mark any existing declined delivery as cancelled/archived so it's not reused
+                existing_declined_delivery = Delivery.objects.filter(order=order, shop=shop, status='declined').first()
+                if existing_declined_delivery:
+                    print(f"🗑️  Archiving declined delivery {existing_declined_delivery.id} for shop {shop.name} - marking as cancelled")
+                    existing_declined_delivery.status = 'cancelled'  # Mark as cancelled so it's not reused
+                    existing_declined_delivery.failed_reason = 'Replaced by new delivery arrangement'
+                    existing_declined_delivery.save()
+                    print(f"✅ Declined delivery archived")
                 
                 # Get shipping_fee from request body
                 shipping_fee_from_request = request.data.get('shipping_fee')
@@ -27047,16 +27048,17 @@ class SellerOrderList(viewsets.ViewSet):
                 delivery_fee = nearest['delivery_fee']
                 estimated_minutes = nearest['estimated_minutes']
                 
-                # Check if there's an existing delivery for this shop (resetting declined one)
-                existing_delivery = Delivery.objects.filter(order=order, shop=shop).first()
-                
-                if existing_delivery:
-                    existing_delivery.rider = selected_rider
-                    existing_delivery.status = 'pending'
-                    existing_delivery.distance_km = Decimal(str(total_distance))
-                    existing_delivery.estimated_minutes = estimated_minutes
-                    existing_delivery.delivery_fee = delivery_fee
-                    existing_delivery.metadata = {
+                # ALWAYS CREATE A NEW DELIVERY - DO NOT REUSE EXISTING ONE
+                print(f"📦 Creating NEW delivery: order={order.order}, shop={shop.name} (ID={shop.id}), rider={selected_rider.rider.username}")
+                delivery = Delivery.objects.create(
+                    order=order,
+                    shop=shop,
+                    rider=selected_rider,
+                    status='pending',
+                    distance_km=Decimal(str(total_distance)),
+                    estimated_minutes=estimated_minutes,
+                    delivery_fee=delivery_fee,
+                    metadata={
                         'distance_to_pickup': distance_to_pickup,
                         'distance_pickup_to_dest': distance_pickup_to_dest,
                         'pickup_location': {'lat': pickup_lat, 'lng': pickup_lng, 'name': pickup_name},
@@ -27072,39 +27074,8 @@ class SellerOrderList(viewsets.ViewSet):
                             'estimated_minutes': estimated_minutes
                         }
                     }
-                    print(f"♻️  Updating existing delivery {existing_delivery.id} for shop {shop.name} with rider {selected_rider.rider.username}")
-                    existing_delivery.save()
-                    print(f"✅ Updated delivery - shop_id={existing_delivery.shop_id}")
-                    delivery = existing_delivery
-                else:
-                    # Create new delivery
-                    print(f"📦 Creating new delivery: order={order.order}, shop={shop.name} (ID={shop.id}), rider={selected_rider.rider.username}")
-                    delivery = Delivery.objects.create(
-                        order=order,
-                        shop=shop,
-                        rider=selected_rider,
-                        status='pending',
-                        distance_km=Decimal(str(total_distance)),
-                        estimated_minutes=estimated_minutes,
-                        delivery_fee=delivery_fee,
-                        metadata={
-                            'distance_to_pickup': distance_to_pickup,
-                            'distance_pickup_to_dest': distance_pickup_to_dest,
-                            'pickup_location': {'lat': pickup_lat, 'lng': pickup_lng, 'name': pickup_name},
-                            'destination_location': {'lat': dest_lat, 'lng': dest_lng},
-                            'all_riders_compared': rider_comparison,
-                            'shop_id': str(shop.id),
-                            'fee_source': fee_source,
-                            'nearest_rider': {
-                                'name': f"{selected_rider.rider.first_name} {selected_rider.rider.last_name}".strip() or selected_rider.rider.username,
-                                'username': selected_rider.rider.username,
-                                'total_distance_km': round(total_distance, 2),
-                                'delivery_fee': float(delivery_fee),
-                                'estimated_minutes': estimated_minutes
-                            }
-                        }
-                    )
-                    print(f"✅ Delivery created with ID={delivery.id}, shop_id={delivery.shop_id}")
+                )
+                print(f"✅ New delivery created with ID={delivery.id}, shop_id={delivery.shop_id}")
                 
                 # Update checkout's shipping_fee to match
                 shop_checkouts = Checkout.objects.filter(
@@ -27156,7 +27127,6 @@ class SellerOrderList(viewsets.ViewSet):
                         "all_riders_compared": rider_comparison
                     }
                 }, status=status.HTTP_200_OK)
-
             
             elif action_type == 'ready_to_ship':
                 if is_pickup:
@@ -27660,7 +27630,7 @@ class SellerOrderList(viewsets.ViewSet):
                     order=order,
                     shop=shop
                 ).exclude(
-                    status__in=['cancelled', 'expired', 'rejected', 'declined']
+                    status__in=['cancelled', 'expired', 'rejected']
                 ).order_by(
                     Case(
                         When(status='accepted', then=Value(1)),
@@ -27668,6 +27638,7 @@ class SellerOrderList(viewsets.ViewSet):
                         When(status='in_progress', then=Value(3)),
                         When(status='delivered', then=Value(4)),
                         When(status='pending', then=Value(5)),
+                        When(status='declined', then=Value(6)),  
                         default=Value(6),
                         output_field=IntegerField(),
                     ),
