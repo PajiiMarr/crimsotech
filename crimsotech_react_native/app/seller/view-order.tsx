@@ -1351,7 +1351,11 @@ export default function SellerViewOrder() {
               }}
               disabled={processing}
             >
-              <Text style={styles.actionButtonText}>Cancel Order</Text>
+              <Text style={styles.actionButtonText}>
+                {order?.status === "rider_assigned"
+                  ? "Cancel Shipment"
+                  : "Cancel Order"}
+              </Text>
             </TouchableOpacity>
           )}
         </View>

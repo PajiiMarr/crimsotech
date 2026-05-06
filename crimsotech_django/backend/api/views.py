@@ -26492,25 +26492,42 @@ class SellerOrderList(viewsets.ViewSet):
                 if shop_status.status in ['completed', 'delivered', 'shipped']:
                     return Response({"success": False, "message": "Order cannot be cancelled at this stage"}, status=status.HTTP_400_BAD_REQUEST)
                 
-                shop_status.status = 'cancelled'
-                shop_status.save()
-                
-                # Check if all shops have cancelled
-                total_shops = Checkout.objects.filter(
-                    Q(order=order, cart_item__product__shop__isnull=False) |
-                    Q(order=order, direct_shop_id__isnull=False)
-                ).values('cart_item__product__shop_id', 'direct_shop_id').distinct().count()
-                
-                cancelled_shops = OrderShopStatus.objects.filter(order=order, status='cancelled').count()
-                non_cancelled = OrderShopStatus.objects.filter(order=order).exclude(status='cancelled').count()
-                
-                if non_cancelled == 0:
-                    order.status = 'cancelled'
-                    message = "Order cancelled by all shops"
+                # Special handling for rider_assigned status - revert to processing (cancel shipment)
+                if shop_status.status == 'rider_assigned':
+                    # Cancel the delivery that was assigned
+                    delivery = Delivery.objects.filter(order=order, shop=shop).order_by('-created_at').first()
+                    if delivery:
+                        delivery.status = 'cancelled'
+                        delivery.save()
+                        print(f"✅ Cancelled delivery {delivery.id} for order {order.order}")
+                    
+                    # Revert status back to processing
+                    shop_status.status = 'processing'
+                    shop_status.save()
+                    order.status = 'processing'
+                    order.save()
+                    message = "Shipment cancelled. Order reverted to processing."
                 else:
-                    message = f"Order cancelled by your shop. {non_cancelled} other shop(s) are still processing."
-                
-                order.save()
+                    # Standard order cancellation
+                    shop_status.status = 'cancelled'
+                    shop_status.save()
+                    
+                    # Check if all shops have cancelled
+                    total_shops = Checkout.objects.filter(
+                        Q(order=order, cart_item__product__shop__isnull=False) |
+                        Q(order=order, direct_shop_id__isnull=False)
+                    ).values('cart_item__product__shop_id', 'direct_shop_id').distinct().count()
+                    
+                    cancelled_shops = OrderShopStatus.objects.filter(order=order, status='cancelled').count()
+                    non_cancelled = OrderShopStatus.objects.filter(order=order).exclude(status='cancelled').count()
+                    
+                    if non_cancelled == 0:
+                        order.status = 'cancelled'
+                        message = "Order cancelled by all shops"
+                    else:
+                        message = f"Order cancelled by your shop. {non_cancelled} other shop(s) are still processing."
+                    
+                    order.save()
             
             else:
                 return Response({"success": False, "message": f"Unknown action type: {action_type}"}, status=status.HTTP_400_BAD_REQUEST)
