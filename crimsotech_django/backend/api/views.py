@@ -30369,7 +30369,13 @@ class PurchasesBuyer(viewsets.ViewSet):
                     'pickup_expire_date': order.pickup_expire_date.isoformat() if order.pickup_expire_date else None,
                     'pickup_date': order.pickup_date.isoformat() if order.pickup_date else None,
                     'metadata': order.metadata if order.metadata else None,
-                    'shop_statuses': {str(oss.shop.id): oss.status for oss in OrderShopStatus.objects.filter(order=order)},
+                    'shop_statuses': {
+                        str(oss.shop.id): {
+                            'status': oss.status,
+                            'refund_expire_date': oss.refund_expire_date.isoformat() if oss.refund_expire_date else None
+                        }
+                        for oss in OrderShopStatus.objects.filter(order=order)
+                    },
                 },
                 'shipping_info': shipping_info,
                 'delivery_address': delivery_address_info,
