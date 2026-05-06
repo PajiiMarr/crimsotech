@@ -887,6 +887,7 @@ class Voucher(models.Model):
     code = models.CharField(max_length=20)
     discount_type = models.TextField()
     value = models.DecimalField(decimal_places=2, max_digits=9)
+    capped_at = models.DecimalField(decimal_places=2, max_digits=9, null=True, blank=True)
     minimum_spend = models.DecimalField(decimal_places=2, max_digits=9, default=0.00)
     maximum_usage = models.IntegerField(default=0)
     # valid_until = models.DateField()

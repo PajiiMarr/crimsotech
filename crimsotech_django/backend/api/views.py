@@ -9151,7 +9151,7 @@ class AdminVouchers(viewsets.ViewSet):
     @action(detail=False, methods=['post'])
     def add_voucher(self, request):
         """
-        Add a new voucher
+        Add a new voucher with capped_at field to limit maximum discount
         """
         try:
             data = request.data.copy()
@@ -9189,6 +9189,30 @@ class AdminVouchers(viewsets.ViewSet):
             if 'shop' in data and data['shop'] in ['', 'null', None, 'global']:
                 data['shop'] = None
             
+            # Handle capped_at field - maximum discount limit
+            capped_at = data.get('capped_at')
+            if capped_at:
+                try:
+                    data['capped_at'] = Decimal(str(capped_at))
+                    if data['capped_at'] <= 0:
+                        return Response({
+                            'success': False,
+                            'error': 'capped_at must be greater than 0'
+                        }, status=status.HTTP_400_BAD_REQUEST)
+                except Exception:
+                    return Response({
+                        'success': False,
+                        'error': 'Invalid capped_at value'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Validate that value doesn't exceed capped_at if both are set
+            value = Decimal(str(data['value']))
+            if data.get('capped_at') and value > data['capped_at']:
+                return Response({
+                    'success': False,
+                    'error': f'Discount value ({value}) cannot exceed capped amount ({data["capped_at"]})'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
             # Create voucher
             serializer = VoucherSerializer(data=data)
             if serializer.is_valid():
@@ -9208,6 +9232,7 @@ class AdminVouchers(viewsets.ViewSet):
                         'is_active': voucher.is_active,
                         'minimum_spend': float(voucher.minimum_spend),
                         'maximum_usage': voucher.maximum_usage,
+                        'capped_at': float(voucher.capped_at) if voucher.capped_at else None,
                         'shop': {
                             'id': str(voucher.shop.id) if voucher.shop else None,
                             'name': voucher.shop.name if voucher.shop else None
