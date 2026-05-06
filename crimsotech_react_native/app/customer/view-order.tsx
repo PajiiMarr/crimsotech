@@ -130,8 +130,9 @@ interface OrderData {
     metadata?: {
       pickup_code?: string;
       transaction_fee_per_shop?: Record<string, number>;
+      discount_per_shop?: Record<string, number>; // ADD THIS LINE
     };
-    shop_statuses?: Record<string, string>;
+    shop_statuses?: Record<string, any>;
   };
   shipping_info: ShippingInfo;
   delivery_address: DeliveryAddress;
@@ -2795,7 +2796,7 @@ export default function ViewTrackOrderPage() {
           </Text>
 
           {isFilteringByShop
-            ? // Shop-specific summary
+            ? // Shop-specific summary - DISPLAY DISCOUNT BUT DON'T SUBTRACT FROM TOTAL
               (() => {
                 const shopId = filterShopId as string;
                 const shopItems = items;
@@ -2817,16 +2818,13 @@ export default function ViewTrackOrderPage() {
                   ? parseFloat(String(transactionFeePerShop[shopId]))
                   : 0;
 
-                // Get discount from order_summary.discount (global discount)
-                const discountAmount = parseFloat(
-                  order_summary.discount || "0",
-                );
+                // Get discount for this specific shop from metadata.discount_per_shop
+                const shopDiscount =
+                  orderData?.order?.metadata?.discount_per_shop?.[shopId] || 0;
 
+                // DO NOT subtract discount from total - only display it
                 const shopTotal =
-                  totalItemPrice +
-                  shopShippingFee +
-                  shopTransactionFee -
-                  discountAmount;
+                  totalItemPrice + shopShippingFee + shopTransactionFee - shopDiscount;
 
                 return (
                   <>
@@ -2873,13 +2871,13 @@ export default function ViewTrackOrderPage() {
                       </View>
                     )}
 
-                    {discountAmount > 0 && (
+                    {shopDiscount > 0 && (
                       <View style={styles.summaryRow}>
                         <Text style={styles.summaryLabel}>Discount:</Text>
                         <Text
                           style={[styles.summaryValue, styles.discountText]}
                         >
-                          -{formatCurrency(discountAmount)}
+                          -{formatCurrency(shopDiscount)}
                         </Text>
                       </View>
                     )}
@@ -3083,9 +3081,11 @@ export default function ViewTrackOrderPage() {
             ? shopStatusData
             : (shopStatusData as any)?.status || null;
 
-          const refundStatus = isFilteringByShop && filterShopId
-          ? (orderData?.order?.shop_statuses?.[filterShopId as string] as any)?.refund_status
-          : null;
+        const refundStatus =
+          isFilteringByShop && filterShopId
+            ? (orderData?.order?.shop_statuses?.[filterShopId as string] as any)
+                ?.refund_status
+            : null;
 
         const showOrderReceivedForShop =
           isFilteringByShop &&
@@ -3195,87 +3195,112 @@ export default function ViewTrackOrderPage() {
                 </TouchableOpacity>
               )}
 
-{showCompletedActionsForShop && (
-  <>
-    <TouchableOpacity
-  style={[
-    styles.requestRefundButton,
-    refundStatus === 'expired' && styles.requestRefundButtonDisabled
-  ]}
-  onPress={() => {
-    if (refundStatus === 'expired') {
-      Alert.alert("Refund Closed", "This refund request has already been closed.");
-      return;
-    }
-    router.push(
-      `/customer/request-refund?orderId=${order.id}&shopId=${filterShopId}`,
-    );
-  }}
-  disabled={refundStatus === 'expired'}
->
-  <Text style={[
-    styles.requestRefundButtonText,
-    refundStatus === 'expired' && styles.requestRefundButtonTextDisabled
-  ]}>
-    {refundStatus === 'expired' ? 'Refund Closed' : 'Request Refund'}
-    {refundCountdown && refundCountdown !== "Expired" && refundStatus !== 'expired' && (
-      <Text style={styles.countdownText}>
-        {"\n"}({refundCountdown})
-      </Text>
-    )}
-  </Text>
-</TouchableOpacity>
+              {showCompletedActionsForShop && (
+                <>
+                  <TouchableOpacity
+                    style={[
+                      styles.requestRefundButton,
+                      refundStatus === "expired" &&
+                        styles.requestRefundButtonDisabled,
+                    ]}
+                    onPress={() => {
+                      if (refundStatus === "expired") {
+                        Alert.alert(
+                          "Refund Closed",
+                          "This refund request has already been closed.",
+                        );
+                        return;
+                      }
+                      router.push(
+                        `/customer/request-refund?orderId=${order.id}&shopId=${filterShopId}`,
+                      );
+                    }}
+                    disabled={refundStatus === "expired"}
+                  >
+                    <Text
+                      style={[
+                        styles.requestRefundButtonText,
+                        refundStatus === "expired" &&
+                          styles.requestRefundButtonTextDisabled,
+                      ]}
+                    >
+                      {refundStatus === "expired"
+                        ? "Refund Closed"
+                        : "Request Refund"}
+                      {refundCountdown &&
+                        refundCountdown !== "Expired" &&
+                        refundStatus !== "expired" && (
+                          <Text style={styles.countdownText}>
+                            {"\n"}({refundCountdown})
+                          </Text>
+                        )}
+                    </Text>
+                  </TouchableOpacity>
 
-    <TouchableOpacity
-      style={styles.rateButton}
-      onPress={() => setRateModalVisible(true)}
-    >
-      <Text style={styles.rateButtonText}>Rate Products</Text>
-    </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.rateButton}
+                    onPress={() => setRateModalVisible(true)}
+                  >
+                    <Text style={styles.rateButtonText}>Rate Products</Text>
+                  </TouchableOpacity>
 
+                  {refundStatus !== "expired" && (
+                    <TouchableOpacity
+                      style={styles.closeRefundButton}
+                      onPress={() => {
+                        Alert.alert(
+                          "Close Refund Request",
+                          "Are you sure you want to close the refund request? This action cannot be undone.",
+                          [
+                            { text: "Cancel", style: "cancel" },
+                            {
+                              text: "Yes, Close",
+                              onPress: async () => {
+                                try {
+                                  const response = await AxiosInstance.post(
+                                    `/purchases-buyer/${order.id}/close-refund/`,
+                                    { shop_id: filterShopId },
+                                    { headers: { "X-User-Id": user?.id } },
+                                  );
 
-    {refundStatus !== 'expired' && (
-  <TouchableOpacity
-    style={styles.closeRefundButton}
-    onPress={() => {
-      Alert.alert(
-        "Close Refund Request",
-        "Are you sure you want to close the refund request? This action cannot be undone.",
-        [
-          { text: "Cancel", style: "cancel" },
-          {
-            text: "Yes, Close",
-            onPress: async () => {
-              try {
-                const response = await AxiosInstance.post(
-                  `/purchases-buyer/${order.id}/close-refund/`,
-                  { shop_id: filterShopId },
-                  { headers: { "X-User-Id": user?.id } }
-                );
-                
-                if (response.data.success) {
-                  setCenterToastMessage("Refund request closed successfully");
-                  setCenterToastVisible(true);
-                  setTimeout(() => setCenterToastVisible(false), 2000);
-                  await fetchOrderData();
-                } else {
-                  Alert.alert("Error", response.data.message || "Failed to close refund");
-                }
-              } catch (error: any) {
-                console.error("Error closing refund:", error);
-                Alert.alert("Error", error.response?.data?.error || "Failed to close refund request");
-              }
-            }
-          }
-        ]
-      );
-    }}
-  >
-    <Text style={styles.closeRefundButtonText}>Close Refund</Text>
-  </TouchableOpacity>
-)}
-  </>
-)}
+                                  if (response.data.success) {
+                                    setCenterToastMessage(
+                                      "Refund request closed successfully",
+                                    );
+                                    setCenterToastVisible(true);
+                                    setTimeout(
+                                      () => setCenterToastVisible(false),
+                                      2000,
+                                    );
+                                    await fetchOrderData();
+                                  } else {
+                                    Alert.alert(
+                                      "Error",
+                                      response.data.message ||
+                                        "Failed to close refund",
+                                    );
+                                  }
+                                } catch (error: any) {
+                                  console.error("Error closing refund:", error);
+                                  Alert.alert(
+                                    "Error",
+                                    error.response?.data?.error ||
+                                      "Failed to close refund request",
+                                  );
+                                }
+                              },
+                            },
+                          ],
+                        );
+                      }}
+                    >
+                      <Text style={styles.closeRefundButtonText}>
+                        Close Refund
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+                </>
+              )}
 
               {showRefundRateForOrder &&
                 (() => {
@@ -4477,5 +4502,4 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "600",
   },
-  
 });
