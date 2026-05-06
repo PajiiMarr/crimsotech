@@ -1359,14 +1359,45 @@ class RefundSerializer(serializers.ModelSerializer):
     payment_detail = UserPaymentDetailSerializer(read_only=True)  # Add this line
 
     def get_items(self, obj):
-        return [{
-            'checkout_id': str(item.checkout.id),
-            'quantity': item.quantity,
-            'amount': str(item.amount) if item.amount else None,
-            'shop_id': str(item.checkout.cart_item.product.shop.id),  
-            'shop_name': item.checkout.cart_item.product.shop.name,
-            'shipping_fee': str(item.checkout.shipping_fee) if item.checkout.shipping_fee else '0', 
-        } for item in obj.items.all()]
+        items = []
+        for item in obj.items.all():
+            checkout = item.checkout
+            if not checkout:
+                continue
+                
+            # For direct checkout items (no cart_item)
+            if not checkout.cart_item:
+                items.append({
+                    'checkout_id': str(checkout.id),
+                    'quantity': item.quantity,
+                    'amount': str(item.amount) if item.amount else None,
+                    'shop_id': str(checkout.direct_shop_id) if checkout.direct_shop_id else None,
+                    'shop_name': checkout.direct_shop_name or 'Unknown',
+                    'shipping_fee': str(checkout.shipping_fee) if checkout.shipping_fee else '0',
+                })
+            else:
+                # Normal cart item with product
+                product = checkout.cart_item.product
+                if product and product.shop:
+                    items.append({
+                        'checkout_id': str(checkout.id),
+                        'quantity': item.quantity,
+                        'amount': str(item.amount) if item.amount else None,
+                        'shop_id': str(product.shop.id),
+                        'shop_name': product.shop.name,
+                        'shipping_fee': str(checkout.shipping_fee) if checkout.shipping_fee else '0',
+                    })
+                else:
+                    # Fallback when product or shop is missing
+                    items.append({
+                        'checkout_id': str(checkout.id),
+                        'quantity': item.quantity,
+                        'amount': str(item.amount) if item.amount else None,
+                        'shop_id': None,
+                        'shop_name': 'Unknown',
+                        'shipping_fee': str(checkout.shipping_fee) if checkout.shipping_fee else '0',
+                    })
+        return items
 
     class Meta:
         model = Refund

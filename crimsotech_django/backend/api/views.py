@@ -51554,8 +51554,16 @@ class UserWalletViewSet(viewsets.ModelViewSet):
                 if today > pending_tx.order.refund_expire_date:
                     should_release = True
             elif pending_tx.order and pending_tx.order.completed_at:
-                # Fallback: release if completed_at is older than 1 day
-                if (today - pending_tx.order.completed_at).days >= 1:
+                # FIX: Convert completed_at to datetime if it's a date
+                completed_at = pending_tx.order.completed_at
+                if isinstance(completed_at, datetime.date) and not isinstance(completed_at, datetime.datetime):
+                    # Convert date to datetime at end of day
+                    from datetime import datetime
+                    completed_at = datetime.combine(completed_at, datetime.max.time())
+                    completed_at = timezone.make_aware(completed_at) if timezone.is_naive(completed_at) else completed_at
+                
+                # Release if completed_at is older than 1 day
+                if (today - completed_at).days >= 1:
                     should_release = True
             else:
                 # No order reference, don't release automatically
@@ -51582,6 +51590,8 @@ class UserWalletViewSet(viewsets.ModelViewSet):
             user_wallet.save()
             
         return released_amount
+
+        
     # ================================================================
     # FIX WALLET - RESET AND RECALCULATE
     # ================================================================
