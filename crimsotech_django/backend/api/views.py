@@ -9151,7 +9151,7 @@ class AdminVouchers(viewsets.ViewSet):
     @action(detail=False, methods=['post'])
     def add_voucher(self, request):
         """
-        Add a new voucher
+        Add a new voucher with capped_at field to limit maximum discount
         """
         try:
             data = request.data.copy()
@@ -9189,6 +9189,30 @@ class AdminVouchers(viewsets.ViewSet):
             if 'shop' in data and data['shop'] in ['', 'null', None, 'global']:
                 data['shop'] = None
             
+            # Handle capped_at field - maximum discount limit
+            capped_at = data.get('capped_at')
+            if capped_at:
+                try:
+                    data['capped_at'] = Decimal(str(capped_at))
+                    if data['capped_at'] <= 0:
+                        return Response({
+                            'success': False,
+                            'error': 'capped_at must be greater than 0'
+                        }, status=status.HTTP_400_BAD_REQUEST)
+                except Exception:
+                    return Response({
+                        'success': False,
+                        'error': 'Invalid capped_at value'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Validate that value doesn't exceed capped_at if both are set
+            value = Decimal(str(data['value']))
+            if data.get('capped_at') and value > data['capped_at']:
+                return Response({
+                    'success': False,
+                    'error': f'Discount value ({value}) cannot exceed capped amount ({data["capped_at"]})'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
             # Create voucher
             serializer = VoucherSerializer(data=data)
             if serializer.is_valid():
@@ -9208,6 +9232,7 @@ class AdminVouchers(viewsets.ViewSet):
                         'is_active': voucher.is_active,
                         'minimum_spend': float(voucher.minimum_spend),
                         'maximum_usage': voucher.maximum_usage,
+                        'capped_at': float(voucher.capped_at) if voucher.capped_at else None,
                         'shop': {
                             'id': str(voucher.shop.id) if voucher.shop else None,
                             'name': voucher.shop.name if voucher.shop else None
@@ -30211,8 +30236,17 @@ class PurchasesBuyer(viewsets.ViewSet):
             total_items = 0
             subtotal = 0
             total_tax = 0
+            total_discount = 0
+            shop_total_amount = 0  # ADDED: Track total amount from checkouts
             
             for checkout in order.checkout_set.all():
+                # ADDED: Sum checkout.total_amount for this order
+                shop_total_amount += float(checkout.total_amount or 0)
+                
+                # Get discount from checkout - use as-is (already total discount for this checkout)
+                if hasattr(checkout, 'discount_applied') and checkout.discount_applied:
+                    total_discount += float(checkout.discount_applied)
+                
                 if checkout.cart_item and checkout.cart_item.product:
                     product = checkout.cart_item.product
                     total_items += checkout.quantity
@@ -30237,8 +30271,9 @@ class PurchasesBuyer(viewsets.ViewSet):
                     item_subtotal = float(checkout.total_amount or 0)
                     subtotal += item_subtotal
                     
-                    # Calculate tax for this item (12% VAT)
-                    item_tax = float(variant.value_added_tax_amount) if variant and variant.value_added_tax_amount else 0.00
+                    # Calculate tax for this item - MULTIPLY BY QUANTITY
+                    variant_vat = float(variant.value_added_tax_amount) if variant and variant.value_added_tax_amount else 0.00
+                    item_tax = variant_vat * checkout.quantity
                     total_tax += item_tax
                     
                     product_serializer = ProductSerializer(product, context={'request': request})
@@ -30399,13 +30434,14 @@ class PurchasesBuyer(viewsets.ViewSet):
                 if hasattr(checkout, 'transaction_fee') and checkout.transaction_fee:
                     total_transaction_fee += float(checkout.transaction_fee)
 
+            # FIX: Use shop_total_amount (sum of checkout.total_amount) for total
             order_summary = {
                 'subtotal': str(subtotal),
                 'shipping_fee': str(total_shipping_fee),
                 'shipping_fees_breakdown': shipping_fees_by_shop,
                 'tax': str(total_tax),
-                'discount': '0.00',
-                'total': str(order.total_amount),
+                'discount': str(total_discount),
+                'total': str(shop_total_amount),  # FIXED: Sum of checkout.total_amount
                 'transaction_fee': str(total_transaction_fee),
                 'payment_fee': str(total_transaction_fee),
             }
@@ -30416,6 +30452,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                     'status': order.status,
                     'status_display': self._get_status_display(order.status),
                     'status_color': self._get_status_color(order.status),
+                    'total_amount': str(shop_total_amount),  # ADDED: total_amount in order
                     'created_at': order.created_at.isoformat(),
                     'updated_at': order.updated_at.isoformat() if order.updated_at else None,
                     'completed_at': order.completed_at.isoformat() if order.completed_at else None,
@@ -30472,6 +30509,8 @@ class PurchasesBuyer(viewsets.ViewSet):
         except Exception as exc:
             logger.exception('Unhandled exception in view_order_detail for order %s user %s: %s', pk, user_id, exc)
             return Response({'error': 'An internal error occurred while fetching the order'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
 
     def _get_item_status(self, order, checkout):
         """Determine the correct status for an item"""

@@ -119,6 +119,7 @@ interface Voucher {
   } | null;
   discount_type: string;
   value: number;
+  capped_at?: number | null;
   start_date: string;
   end_date: string | null;
   added_at: string;
@@ -680,6 +681,7 @@ interface AddVoucherFormData {
   description: string;
   discount_type: "percentage" | "fixed";
   value: number | "";
+  capped_at: number | "";
   minimum_spend: number | "";
   maximum_usage: number | "";
   start_date: Date | undefined;
@@ -710,6 +712,7 @@ const AddVoucherModal = ({
     description: "",
     discount_type: "percentage",
     value: "",
+    capped_at: "",
     minimum_spend: "",
     maximum_usage: "",
     start_date: new Date(),
@@ -727,6 +730,7 @@ const AddVoucherModal = ({
       description: "",
       discount_type: "percentage",
       value: "",
+      capped_at: "",
       minimum_spend: "",
       maximum_usage: "",
       start_date: new Date(),
@@ -827,6 +831,10 @@ const AddVoucherModal = ({
       setError("Discount value must be greater than 0");
       return false;
     }
+    if (formData.capped_at !== "" && formData.capped_at <= 0) {
+      setError("Maximum discount cap must be greater than 0");
+      return false;
+    }
     if (!formData.end_date) {
       setError("End date is required");
       return false;
@@ -854,6 +862,7 @@ const AddVoucherModal = ({
         code: formData.code.toUpperCase(),
         discount_type: formData.discount_type,
         value: Number(formData.value),
+        capped_at: formData.capped_at === "" ? null : Number(formData.capped_at),
         minimum_spend:
           formData.minimum_spend === "" ? 0 : Number(formData.minimum_spend),
         maximum_usage:
@@ -1002,6 +1011,30 @@ const AddVoucherModal = ({
             </span>
           )}
         </div>
+      </div>
+
+      <div className="grid gap-2">
+        <Label htmlFor="capped_at">Maximum Discount Cap</Label>
+        <div className="relative">
+          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
+            ₱
+          </span>
+          <Input
+            id="capped_at"
+            name="capped_at"
+            type="number"
+            min="0"
+            step="0.01"
+            value={formData.capped_at}
+            onChange={handleInputChange}
+            placeholder="e.g., 500 (no limit if empty)"
+            disabled={isSubmitting}
+            className="pl-8"
+          />
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Maximum discount amount that can be applied per order. Leave empty for no cap.
+        </p>
       </div>
 
       <div className="grid grid-cols-2 gap-4">
@@ -1238,6 +1271,7 @@ const EditVoucherModal = ({
     description: "",
     discount_type: "percentage",
     value: "",
+    capped_at: "",
     minimum_spend: "",
     maximum_usage: "",
     start_date: undefined,
@@ -1257,11 +1291,10 @@ const EditVoucherModal = ({
         discount_type:
           (voucher.discount_type as "percentage" | "fixed") || "percentage",
         value: voucher.value || "",
+        capped_at: (voucher as any).capped_at !== undefined && (voucher as any).capped_at !== null ? (voucher as any).capped_at : "",
         minimum_spend: voucher.minimum_spend || "",
         maximum_usage: voucher.maximum_usage || "",
-        start_date: voucher.start_date
-          ? new Date(voucher.start_date)
-          : undefined,
+        start_date: voucher.start_date ? new Date(voucher.start_date) : undefined,
         end_date: voucher.end_date ? new Date(voucher.end_date) : undefined,
         shop: voucher.shop?.id || null,
         is_active: voucher.is_active,
@@ -1276,6 +1309,7 @@ const EditVoucherModal = ({
       description: "",
       discount_type: "percentage",
       value: "",
+      capped_at: "",
       minimum_spend: "",
       maximum_usage: "",
       start_date: undefined,
@@ -1376,6 +1410,10 @@ const EditVoucherModal = ({
       setError("Discount value must be greater than 0");
       return false;
     }
+    if (formData.capped_at !== "" && formData.capped_at <= 0) {
+      setError("Maximum discount cap must be greater than 0");
+      return false;
+    }
     if (!formData.end_date) {
       setError("End date is required");
       return false;
@@ -1403,6 +1441,7 @@ const EditVoucherModal = ({
         code: formData.code.toUpperCase(),
         discount_type: formData.discount_type,
         value: Number(formData.value),
+        capped_at: formData.capped_at === "" ? null : Number(formData.capped_at),
         minimum_spend:
           formData.minimum_spend === "" ? 0 : Number(formData.minimum_spend),
         maximum_usage:
@@ -1551,6 +1590,30 @@ const EditVoucherModal = ({
             </span>
           )}
         </div>
+      </div>
+
+      <div className="grid gap-2">
+        <Label htmlFor="capped_at">Maximum Discount Cap</Label>
+        <div className="relative">
+          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
+            ₱
+          </span>
+          <Input
+            id="capped_at"
+            name="capped_at"
+            type="number"
+            min="0"
+            step="0.01"
+            value={formData.capped_at}
+            onChange={handleInputChange}
+            placeholder="e.g., 500 (no limit if empty)"
+            disabled={isSubmitting}
+            className="pl-8"
+          />
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Maximum discount amount that can be applied per order. Leave empty for no cap.
+        </p>
       </div>
 
       <div className="grid grid-cols-2 gap-4">
@@ -1879,6 +1942,7 @@ export default function Vouchers() {
             code: `${original.code}_COPY_${Date.now()}`,
             discount_type: original.discount_type,
             value: original.value,
+            capped_at: original.capped_at || null,
             minimum_spend: original.minimum_spend,
             maximum_usage: original.maximum_usage,
             start_date: original.start_date,
