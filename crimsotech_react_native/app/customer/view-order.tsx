@@ -275,6 +275,7 @@ export default function ViewTrackOrderPage() {
   const _lastReviewedFetchKey = useRef<string | null>(null);
   const [cancellingItems, setCancellingItems] = useState(false);
   const [refundCountdown, setRefundCountdown] = useState<string | null>(null);
+  const isCompletingOrder = useRef(false); 
   const getReviewedMapKey = (productId: string) =>
     `${orderId || "unknown-order"}:${productId}`;
 
@@ -902,32 +903,39 @@ export default function ViewTrackOrderPage() {
 
   const handleOrderReceived = async () => {
     if (!orderId || !user?.id) return;
-
+    
+    // Prevent multiple clicks
+    if (isCompletingOrder.current) return;
+    isCompletingOrder.current = true;
+  
     const isShopSpecific = isFilteringByShop && filterShopId;
     const shopId = isShopSpecific ? filterShopId : null;
-
+  
     Alert.alert(
       "Confirm Order Received",
       isShopSpecific
         ? `Have you received this order from ${filterShopName}? This will mark it as completed.`
         : "Have you received your order? This will mark the order as completed.",
       [
-        { text: "No", style: "cancel" },
+        { text: "No", style: "cancel", onPress: () => {
+          isCompletingOrder.current = false;
+        } },
         {
           text: "Yes",
           onPress: async () => {
             try {
               let response;
-
+  
               if (isShopSpecific && shopId) {
                 const shopCheckout = orderData?.items.find(
                   (item) => item.shop_info?.id === shopId,
                 );
                 if (!shopCheckout) {
                   Alert.alert("Error", "Could not find items for this shop");
+                  isCompletingOrder.current = false;
                   return;
                 }
-
+  
                 response = await AxiosInstance.post(
                   `/purchases-buyer/${orderId}/complete-shop-item/`,
                   {
@@ -943,7 +951,7 @@ export default function ViewTrackOrderPage() {
                   { headers: { "X-User-Id": user.id } },
                 );
               }
-
+  
               if (response.data.success) {
                 setCenterToastMessage(
                   isShopSpecific
@@ -951,7 +959,14 @@ export default function ViewTrackOrderPage() {
                     : "Order marked as completed successfully",
                 );
                 setCenterToastVisible(true);
-                fetchOrderData();
+                
+                // Refresh data
+                await fetchOrderData();
+                
+                // Hide toast after 2 seconds
+                setTimeout(() => {
+                  setCenterToastVisible(false);
+                }, 2000);
               } else {
                 Alert.alert(
                   "Error",
@@ -964,6 +979,8 @@ export default function ViewTrackOrderPage() {
                 "Error",
                 error.response?.data?.message || "Failed to complete order",
               );
+            } finally {
+              isCompletingOrder.current = false;
             }
           },
         },
