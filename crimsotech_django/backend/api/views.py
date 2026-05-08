@@ -29085,7 +29085,7 @@ class CheckoutOrder(viewsets.ViewSet):
 
             # --- Voucher discount calculation - PROPORTIONAL BY SHOP SUBTOTAL ---
             discount_amount = Decimal('0')
-            discount_per_shop = {}  # Store discount per shop (proportional)
+            discount_per_shop = {}
             voucher = None
             current_date = timezone.now().date()
 
@@ -29278,9 +29278,13 @@ class CheckoutOrder(viewsets.ViewSet):
             cart_item_ids = []
             checkout_items_response = []
 
-            # --- Create Checkout records ---
+            # --- Create Checkout records and DECREASE STOCK HERE (ONCE) ---
             if is_direct_checkout:
                 shop_id = str(direct_product.shop.id) if direct_product.shop else None
+                
+                # Decrease stock for direct checkout
+                direct_variant.quantity -= direct_quantity
+                direct_variant.save()
                 
                 product_total = subtotal
                 shipping_fee_share = Decimal(str(shipping_fees_breakdown.get(shop_id, 0))) if shop_id else Decimal('0')
@@ -29381,6 +29385,14 @@ class CheckoutOrder(viewsets.ViewSet):
                         price = product_data['price']
                         line_total = product_data['line_total']
                         
+                        # Decrease stock for this item (ONCE per item)
+                        if variant:
+                            variant.quantity -= quantity
+                            variant.save()
+                        elif product_obj and hasattr(product_obj, 'quantity'):
+                            product_obj.quantity -= quantity
+                            product_obj.save()
+                        
                         # Calculate proportional share of fees based on product value
                         if shop_product_total > 0:
                             proportion = line_total / shop_product_total
@@ -29476,9 +29488,6 @@ class CheckoutOrder(viewsets.ViewSet):
                     discount_amount=discount_amount
                 )
 
-            # Decrease stock for all items
-            self._decrease_stock_for_order(order)
-
             # Build breakdown messages
             breakdown_message = ""
             if shipping_fees_breakdown:
@@ -29552,8 +29561,7 @@ class CheckoutOrder(viewsets.ViewSet):
                 {"error": "Failed to create order", "details": str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-
-            
+                
 
     @action(detail=False, methods=['GET'], url_path='get_order_details/(?P<order_id>[^/.]+)')
     def get_order_details(self, request, order_id=None):
