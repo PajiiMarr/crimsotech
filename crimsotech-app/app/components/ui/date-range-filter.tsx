@@ -23,15 +23,14 @@ interface DateRangeFilterProps {
 }
 
 export default function DateRangeFilter({ onDateRangeChange, isLoading = false }: DateRangeFilterProps) {
-  // Changed default from 'weekly' to 'monthly' and start date to 1 month ago
   const [dateRange, setDateRange] = useState<{
     start: Date;
     end: Date;
-    rangeType: 'all' | 'daily' | 'weekly' | 'monthly' | 'yearly' | 'specific_month' | 'specific_year' | 'custom';
+    rangeType: 'daily' | 'weekly' | 'monthly' | 'yearly' | 'specific_month' | 'specific_year' | 'custom';
   }>({
-    start: subMonths(new Date(), 1), // Changed from subDays(new Date(), 7)
+    start: subMonths(new Date(), 1),
     end: new Date(),
-    rangeType: 'monthly', // Changed from 'weekly'
+    rangeType: 'monthly',
   });
 
   const [selectedMonth, setSelectedMonth] = useState<string>(format(new Date(), 'yyyy-MM'));
@@ -43,15 +42,15 @@ export default function DateRangeFilter({ onDateRangeChange, isLoading = false }
   }, []);
 
   const handleAllSelect = () => {
-    // For "All" data, we need to fetch from the beginning of time
-    // We'll use a very old date (e.g., 2000-01-01) as the start date
+    // For "All" data, fetch from the beginning of time
+    // Using a very old date (2000-01-01) as the start date
     const start = new Date('2000-01-01');
     const now = new Date();
     
     const newRange = {
       start,
       end: now,
-      rangeType: 'all' as const,
+      rangeType: 'custom' as const,
     };
     
     setDateRange(newRange);
@@ -76,7 +75,7 @@ export default function DateRangeFilter({ onDateRangeChange, isLoading = false }
         start = subYears(now, 1);
         break;
       default:
-        start = subMonths(now, 1); // Changed default to 1 month
+        start = subMonths(now, 1);
     }
     
     const newRange = {
@@ -97,7 +96,7 @@ export default function DateRangeFilter({ onDateRangeChange, isLoading = false }
     const newRange = {
       start: startOfMonth(date),
       end: endOfMonth(date),
-      rangeType: 'specific_month' as const,
+      rangeType: 'custom' as const,
     };
     
     setDateRange(newRange);
@@ -112,7 +111,7 @@ export default function DateRangeFilter({ onDateRangeChange, isLoading = false }
     const newRange = {
       start: startOfYear(date),
       end: endOfYear(date),
-      rangeType: 'specific_year' as const,
+      rangeType: 'custom' as const,
     };
     
     setDateRange(newRange);
@@ -129,6 +128,9 @@ export default function DateRangeFilter({ onDateRangeChange, isLoading = false }
     setDateRange(newRange);
     onDateRangeChange(newRange);
   };
+
+  // Check if current range is "All Time" (start date is 2000-01-01 or earlier)
+  const isAllTime = dateRange.start <= new Date('2000-01-02');
 
   // Generate month options for the last 24 months
   const generateMonthOptions = () => {
@@ -161,7 +163,7 @@ export default function DateRangeFilter({ onDateRangeChange, isLoading = false }
         <div className="text-sm">
           <span className="text-muted-foreground">Showing: </span>
           <span className="font-medium">
-            {dateRange.rangeType === 'all' ? (
+            {isAllTime ? (
               'All Time'
             ) : (
               `${format(dateRange.start, 'MMM dd')} - ${format(dateRange.end, 'MMM dd, yyyy')}`
@@ -173,7 +175,7 @@ export default function DateRangeFilter({ onDateRangeChange, isLoading = false }
           {/* All Time Button */}
           <Button
             type="button"
-            variant={dateRange.rangeType === 'all' ? 'default' : 'outline'}
+            variant={isAllTime ? 'default' : 'outline'}
             size="sm"
             onClick={handleAllSelect}
             disabled={isLoading}

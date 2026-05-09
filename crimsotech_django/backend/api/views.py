@@ -1400,15 +1400,8 @@ class AdminDashboard(viewsets.ViewSet):
             if start_date > end_date:
                 start_date, end_date = end_date, start_date
 
-            max_days = 365 * 2
-            date_range_days = (end_date - start_date).days
-
-            if date_range_days > max_days:
-                return Response({
-                    'success': False,
-                    'error': f'Date range exceeds maximum allowed ({max_days} days)'
-                }, status=status.HTTP_400_BAD_REQUEST)
-
+            # No date range limit - allow any date range
+            
             overview_data = self._get_overview_data(start_date, end_date)
             operational_data = self._get_operational_data(start_date, end_date)
             sales_data = self._get_sales_analytics_data(start_date, end_date, date_range_type)
@@ -1422,7 +1415,7 @@ class AdminDashboard(viewsets.ViewSet):
                     'start_date': start_date.isoformat(),
                     'end_date': end_date.isoformat(),
                     'range_type': date_range_type,
-                    'total_days': date_range_days,
+                    'total_days': (end_date - start_date).days,
                 },
                 'overview': overview_data,
                 'operational': operational_data,
@@ -1680,6 +1673,171 @@ class AdminDashboard(viewsets.ViewSet):
             }
         except Exception as e:
             print(f"Error in _get_overview_data: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            raise
+
+    def _get_operational_data(self, start_date, end_date):
+        try:
+            from decimal import Decimal
+            
+            # Active Boosts
+            active_boosts = Boost.objects.filter(
+                start_date__date__lte=end_date,
+                end_date__date__gte=start_date,
+                status='active'
+            ).count()
+            
+            # Boost revenue
+            boost_revenue = Boost.objects.filter(
+                start_date__date__lte=end_date,
+                end_date__date__gte=start_date,
+                status='active'
+            ).aggregate(
+                total_revenue=Sum('boost_plan__price')
+            )['total_revenue'] or Decimal('0')
+
+            # Pending Refunds
+            pending_refunds = Refund.objects.filter(
+                requested_at__date__gte=start_date,
+                requested_at__date__lte=end_date,
+                status='pending'
+            ).count()
+            
+            pending_refund_amount = Refund.objects.filter(
+                requested_at__date__gte=start_date,
+                requested_at__date__lte=end_date,
+                status='pending'
+            ).aggregate(
+                total_amount=Sum('total_refund_amount')
+            )['total_amount'] or Decimal('0')
+
+            # Completed Refunds
+            completed_refunds = Refund.objects.filter(
+                processed_at__date__gte=start_date,
+                processed_at__date__lte=end_date,
+                status='approved'
+            ).count()
+            
+            completed_refund_amount = Refund.objects.filter(
+                processed_at__date__gte=start_date,
+                processed_at__date__lte=end_date,
+                status='approved'
+            ).aggregate(
+                total_amount=Sum('approved_refund_amount')
+            )['total_amount'] or Decimal('0')
+
+            # Low Stock Products
+            low_stock_variants = Variants.objects.filter(
+                quantity__lt=5,
+                is_active=True,
+                product__is_removed=False,
+                product__upload_status='published'
+            ).values('product').distinct().count()
+
+            # Average Rating
+            avg_rating = Review.objects.filter(
+                created_at__date__gte=start_date,
+                created_at__date__lte=end_date
+            ).aggregate(
+                avg_rating=Avg('average_rating')
+            )['avg_rating'] or 0
+            
+            total_reviews = Review.objects.filter(
+                created_at__date__gte=start_date,
+                created_at__date__lte=end_date
+            ).count()
+
+            # Pending Reports
+            pending_reports = Report.objects.filter(
+                created_at__date__gte=start_date,
+                created_at__date__lte=end_date,
+                status='pending'
+            ).count()
+
+            # Active Riders
+            active_riders = Rider.objects.filter(
+                verified=True,
+                is_accepting_deliveries=True
+            ).count()
+            
+            total_riders = Rider.objects.filter(verified=True).count()
+
+            # Completed deliveries
+            completed_deliveries = Delivery.objects.filter(
+                delivered_at__date__gte=start_date,
+                delivered_at__date__lte=end_date,
+                status='delivered'
+            ).count()
+            
+            total_delivery_fees = Delivery.objects.filter(
+                delivered_at__date__gte=start_date,
+                delivered_at__date__lte=end_date,
+                status='delivered'
+            ).aggregate(
+                total_fees=Sum('delivery_fee')
+            )['total_fees'] or Decimal('0')
+
+            # Active Vouchers
+            active_vouchers = Voucher.objects.filter(
+                is_active=True,
+                start_date__lte=end_date,
+                end_date__gte=start_date
+            ).count()
+            
+            vouchers_used = Checkout.objects.filter(
+                created_at__gte=start_date,
+                created_at__lte=end_date,
+                voucher__isnull=False
+            ).count()
+            
+            total_voucher_discount = Checkout.objects.filter(
+                created_at__gte=start_date,
+                created_at__lte=end_date,
+                voucher__isnull=False
+            ).aggregate(
+                total_discount=Sum('discount_applied')
+            )['total_discount'] or Decimal('0')
+
+            # Incoming balance from ongoing transactions
+            pending_orders_value = Checkout.objects.filter(
+                order__created_at__date__gte=start_date,
+                order__created_at__date__lte=end_date,
+                order__status__in=['pending', 'processing', 'shipped']
+            ).aggregate(
+                total=Sum('total_amount')
+            )['total'] or Decimal('0')
+
+            return {
+                'active_boosts': active_boosts,
+                'boost_revenue': float(boost_revenue),
+                'pending_refunds': pending_refunds,
+                'pending_refund_amount': float(pending_refund_amount),
+                'completed_refunds': completed_refunds,
+                'completed_refund_amount': float(completed_refund_amount),
+                'low_stock_products': low_stock_variants,
+                'avg_rating': round(float(avg_rating), 1),
+                'total_reviews': total_reviews,
+                'pending_reports': pending_reports,
+                'active_riders': active_riders,
+                'total_riders': total_riders,
+                'completed_deliveries': completed_deliveries,
+                'total_delivery_fees': float(total_delivery_fees),
+                'active_vouchers': active_vouchers,
+                'vouchers_used': vouchers_used,
+                'total_voucher_discount': float(total_voucher_discount),
+                'incoming_balance': float(pending_orders_value),
+                'calculation_notes': {
+                    'boost_revenue': 'Sum of boost_plan prices for active boosts in this period',
+                    'pending_refund_amount': 'Sum of total_refund_amount for pending refunds',
+                    'completed_refund_amount': 'Sum of approved_refund_amount for approved refunds',
+                    'total_delivery_fees': 'Sum of delivery_fee from completed deliveries',
+                    'total_voucher_discount': 'Sum of discount_applied from checkouts using vouchers',
+                    'incoming_balance': 'Sum of total_amount from pending/processing/shipped orders',
+                }
+            }
+        except Exception as e:
+            print(f"Error in _get_operational_data: {str(e)}")
             import traceback
             traceback.print_exc()
             raise
@@ -2236,176 +2394,6 @@ class AdminDashboard(viewsets.ViewSet):
             traceback.print_exc()
             raise
 
-    def _get_operational_data(self, start_date, end_date):
-        try:
-            from decimal import Decimal
-            
-            # Active Boosts (from products being boosted)
-            active_boosts = Boost.objects.filter(
-                start_date__date__lte=end_date,
-                end_date__date__gte=start_date,
-                status='active'
-            ).count()
-            
-            # Calculate boost revenue (price of active boost plans)
-            boost_revenue = Boost.objects.filter(
-                start_date__date__lte=end_date,
-                end_date__date__gte=start_date,
-                status='active'
-            ).aggregate(
-                total_revenue=Sum('boost_plan__price')
-            )['total_revenue'] or Decimal('0')
-
-            # Pending Refunds
-            pending_refunds = Refund.objects.filter(
-                requested_at__date__gte=start_date,
-                requested_at__date__lte=end_date,
-                status='pending'
-            ).count()
-            
-            # Calculate total refund amount pending
-            pending_refund_amount = Refund.objects.filter(
-                requested_at__date__gte=start_date,
-                requested_at__date__lte=end_date,
-                status='pending'
-            ).aggregate(
-                total_amount=Sum('total_refund_amount')
-            )['total_amount'] or Decimal('0')
-
-            # Completed Refunds in period
-            completed_refunds = Refund.objects.filter(
-                processed_at__date__gte=start_date,
-                processed_at__date__lte=end_date,
-                status='approved'
-            ).count()
-            
-            completed_refund_amount = Refund.objects.filter(
-                processed_at__date__gte=start_date,
-                processed_at__date__lte=end_date,
-                status='approved'
-            ).aggregate(
-                total_amount=Sum('approved_refund_amount')
-            )['total_amount'] or Decimal('0')
-
-            # Low Stock Products
-            low_stock_variants = Variants.objects.filter(
-                quantity__lt=5,
-                is_active=True,
-                product__is_removed=False,
-                product__upload_status='published'
-            ).values('product').distinct().count()
-
-            # Average Rating
-            avg_rating = Review.objects.filter(
-                created_at__date__gte=start_date,
-                created_at__date__lte=end_date
-            ).aggregate(
-                avg_rating=Avg('average_rating')
-            )['avg_rating'] or 0
-            
-            total_reviews = Review.objects.filter(
-                created_at__date__gte=start_date,
-                created_at__date__lte=end_date
-            ).count()
-
-            # Pending Reports
-            pending_reports = Report.objects.filter(
-                created_at__date__gte=start_date,
-                created_at__date__lte=end_date,
-                status='pending'
-            ).count()
-
-            # Active Riders
-            active_riders = Rider.objects.filter(
-                verified=True,
-                is_accepting_deliveries=True
-            ).count()
-            
-            total_riders = Rider.objects.filter(verified=True).count()
-
-            # Total deliveries completed in period
-            completed_deliveries = Delivery.objects.filter(
-                delivered_at__date__gte=start_date,
-                delivered_at__date__lte=end_date,
-                status='delivered'
-            ).count()
-            
-            total_delivery_fees = Delivery.objects.filter(
-                delivered_at__date__gte=start_date,
-                delivered_at__date__lte=end_date,
-                status='delivered'
-            ).aggregate(
-                total_fees=Sum('delivery_fee')
-            )['total_fees'] or Decimal('0')
-
-            # Active Vouchers
-            active_vouchers = Voucher.objects.filter(
-                is_active=True,
-                start_date__lte=end_date,
-                end_date__gte=start_date
-            ).count()
-            
-            # Vouchers used in period
-            vouchers_used = Checkout.objects.filter(
-                created_at__gte=start_date,
-                created_at__lte=end_date,
-                voucher__isnull=False
-            ).count()
-            
-            total_voucher_discount = Checkout.objects.filter(
-                created_at__gte=start_date,
-                created_at__lte=end_date,
-                voucher__isnull=False
-            ).aggregate(
-                total_discount=Sum('discount_applied')
-            )['total_discount'] or Decimal('0')
-
-            # Incoming balance from ongoing transactions
-            pending_orders_value = Checkout.objects.filter(
-                order__created_at__date__gte=start_date,
-                order__created_at__date__lte=end_date,
-                order__status__in=['pending', 'processing', 'shipped']
-            ).aggregate(
-                total=Sum('total_amount')
-            )['total'] or Decimal('0')
-
-            return {
-                'active_boosts': active_boosts,
-                'boost_revenue': float(boost_revenue),
-                'pending_refunds': pending_refunds,
-                'pending_refund_amount': float(pending_refund_amount),
-                'completed_refunds': completed_refunds,
-                'completed_refund_amount': float(completed_refund_amount),
-                'low_stock_products': low_stock_variants,
-                'avg_rating': round(float(avg_rating), 1),
-                'total_reviews': total_reviews,
-                'pending_reports': pending_reports,
-                'active_riders': active_riders,
-                'total_riders': total_riders,
-                'completed_deliveries': completed_deliveries,
-                'total_delivery_fees': float(total_delivery_fees),
-                'active_vouchers': active_vouchers,
-                'vouchers_used': vouchers_used,
-                'total_voucher_discount': float(total_voucher_discount),
-                'incoming_balance': float(pending_orders_value),
-                'calculation_notes': {
-                    'boost_revenue': 'Sum of boost_plan prices for active boosts in this period',
-                    'pending_refund_amount': 'Sum of total_refund_amount for pending refunds',
-                    'completed_refund_amount': 'Sum of approved_refund_amount for approved refunds',
-                    'total_delivery_fees': 'Sum of delivery_fee from completed deliveries',
-                    'total_voucher_discount': 'Sum of discount_applied from checkouts using vouchers',
-                    'platform_fee': 'Calculated as 5% of total revenue from completed orders',
-                    'transaction_fee': 'Calculated as 5% of checkout total (excluding fees), capped at ₱50 per checkout',
-                    'vat': 'Calculated from variant.value_added_tax_amount × quantity',
-                    'incoming_balance': 'Sum of total_amount from pending/processing/shipped orders',
-                }
-            }
-        except Exception as e:
-            print(f"Error in _get_operational_data: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            raise
-
     def _get_status_color(self, status):
         color_map = {
             'pending': '#f59e0b',
@@ -2418,6 +2406,7 @@ class AdminDashboard(viewsets.ViewSet):
         }
         return color_map.get(status.lower(), '#6b7280')
 
+        
 class AdminAnalytics(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def get_comprehensive_analytics(self, request):
