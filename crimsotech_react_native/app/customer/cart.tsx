@@ -778,7 +778,8 @@ export default function CartPage() {
   const [availableVouchers, setAvailableVouchers] = useState<Voucher[]>([]);
   const [isApplyingVoucher, setIsApplyingVoucher] = useState(false);
 
-  const fetchCartData = async (voucherCode?: string) => {
+  // Updated fetchCartData to accept voucher_code parameter
+  const fetchCartData = async (voucherCode?: string | null) => {
     if (!userId) {
       Alert.alert("Login Required", "Please login to view your cart");
       setLoading(false);
@@ -835,7 +836,6 @@ export default function CartPage() {
             });
           });
           setCartStores(storesArray);
-          updateTotalsFromStores(storesArray, response.data.totals.applied_voucher);
         } else {
           setCartStores([]);
           setCartTotals({
@@ -869,7 +869,7 @@ export default function CartPage() {
 
   const onRefresh = () => {
     setRefreshing(true);
-    fetchCartData();
+    fetchCartData(cartTotals.applied_voucher?.code);
   };
 
   const updateQuantity = async (itemId: string, newQuantity: number) => {
@@ -901,11 +901,15 @@ export default function CartPage() {
         if (response.data.totals) {
           setCartTotals(response.data.totals);
         }
+        
+        // Refresh available vouchers since subtotal changed
+        const currentVoucherCode = cartTotals.applied_voucher?.code;
+        await fetchCartData(currentVoucherCode);
       }
     } catch (error) {
       console.error("Error updating quantity:", error);
       Alert.alert("Error", "Failed to update quantity");
-      fetchCartData();
+      fetchCartData(cartTotals.applied_voucher?.code);
     } finally {
       setUpdatingId(null);
     }
@@ -935,6 +939,10 @@ export default function CartPage() {
         if (response.data.totals) {
           setCartTotals(response.data.totals);
         }
+        
+        // Refresh available vouchers since cart items changed
+        const currentVoucherCode = cartTotals.applied_voucher?.code;
+        await fetchCartData(currentVoucherCode);
       }
     } catch (error) {
       console.error("Error removing item:", error);
@@ -1009,7 +1017,7 @@ export default function CartPage() {
     });
   };
 
-  const updateTotalsFromStores = (stores: CartStore[], appliedVoucherData = cartTotals.applied_voucher) => {
+  const updateTotalsFromStores = (stores: CartStore[]) => {
     const allItems = stores.flatMap(store => store.items);
     const selected = allItems.filter(item => item.selected);
     
@@ -1019,11 +1027,12 @@ export default function CartPage() {
     );
     
     let discount = 0;
-    if (appliedVoucherData) {
-      if (appliedVoucherData.discount_type === 'percentage') {
-        discount = (subtotal * appliedVoucherData.value) / 100;
-      } else if (appliedVoucherData.discount_type === 'fixed') {
-        discount = Math.min(appliedVoucherData.value, subtotal);
+    if (cartTotals.applied_voucher && subtotal > 0) {
+      if (cartTotals.applied_voucher.discount_type === 'percentage') {
+        discount = (subtotal * cartTotals.applied_voucher.value) / 100;
+        discount = Math.min(discount, subtotal);
+      } else {
+        discount = Math.min(cartTotals.applied_voucher.value, subtotal);
       }
     }
     
@@ -1037,46 +1046,51 @@ export default function CartPage() {
     }));
   };
 
+  // Updated handleApplyVoucher to call backend
   const handleApplyVoucher = async (code: string) => {
+    if (!code || code.trim() === "") {
+      Alert.alert("Error", "Please enter a voucher code");
+      return;
+    }
+    
     setIsApplyingVoucher(true);
     try {
-      const voucher = availableVouchers.find(v => v.code === code);
+      // Call fetchCartData with the voucher code - this lets the backend validate and apply it
+      await fetchCartData(code.toUpperCase());
       
-      if (voucher && cartTotals.subtotal >= voucher.minimum_spend) {
-        let discountAmount = 0;
-        if (voucher.discount_type === 'percentage') {
-          discountAmount = (cartTotals.subtotal * voucher.value) / 100;
-        } else {
-          discountAmount = Math.min(voucher.value, cartTotals.subtotal);
-        }
-        
-        setCartTotals(prev => ({
-          ...prev,
-          discount: discountAmount,
-          applied_voucher: {
-            id: voucher.id,
-            name: voucher.name,
-            code: voucher.code,
-            discount_type: voucher.discount_type,
-            value: voucher.value,
-            discount_amount: discountAmount
-          }
-        }));
-        
-        setVoucherModalVisible(false);
+      // Close the modal after successful application
+      setVoucherModalVisible(false);
+      
+      // Show success message if voucher was applied successfully
+      if (cartTotals.applied_voucher && cartTotals.applied_voucher.code === code.toUpperCase()) {
         Alert.alert("Success", "Voucher applied successfully!");
-      } else {
-        Alert.alert("Error", "Voucher not qualified or invalid");
       }
     } catch (error) {
       console.error("Error applying voucher:", error);
+      Alert.alert("Error", "Failed to apply voucher. Please try again.");
     } finally {
       setIsApplyingVoucher(false);
     }
   };
 
-  const handleRemoveVoucher = () => {
-    fetchCartData();
+  // Updated handleRemoveVoucher
+  const handleRemoveVoucher = async () => {
+    Alert.alert(
+      "Remove Voucher",
+      "Are you sure you want to remove the applied voucher?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Remove",
+          style: "destructive",
+          onPress: async () => {
+            // Fetch cart without voucher code to remove it
+            await fetchCartData(null);
+            Alert.alert("Success", "Voucher removed successfully");
+          }
+        }
+      ]
+    );
   };
 
   const handleVoucherIconPress = () => {
@@ -1096,7 +1110,7 @@ export default function CartPage() {
 
     const selectedIds = selectedItems.map((item) => item.id).join(",");
     const voucherParam = cartTotals.applied_voucher 
-      ? `&voucher=${cartTotals.applied_voucher.id}` 
+      ? `&voucher=${cartTotals.applied_voucher.code}` 
       : '';
     router.push(`/customer/checkout?selected=${selectedIds}${voucherParam}`);
   };
