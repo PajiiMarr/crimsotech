@@ -7,6 +7,7 @@ import {
   Modal,
   FlatList,
   StyleSheet,
+  ActivityIndicator,
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 
@@ -32,9 +33,16 @@ interface AddressDropdownsProps {
     province?: string;
     city?: string;
     barangay?: string;
+    street?: string;
   };
   disabled?: boolean;
 }
+
+// PSGC API Base URL
+const PSGC_API_BASE = 'https://psgc.gitlab.io/api';
+
+// Zamboanga City code (City of Zamboanga)
+const ZAMBOANGA_CITY_CODE = '097332000';
 
 export default function AddressDropdowns({
   value,
@@ -42,81 +50,20 @@ export default function AddressDropdowns({
   errors,
   disabled = false,
 }: AddressDropdownsProps) {
-  // Hardcoded data
-  const HARDCODED_PROVINCE = "Zamboanga Del Sur";
+  // Hardcoded province and city
+  const HARDCODED_PROVINCE = "Zamboanga del Sur";
   const HARDCODED_CITY = "City of Zamboanga";
   
-  // Hardcoded barangays for City of Zamboanga
-  const BARANGAYS: AddressItem[] = [
-    { code: "1", name: "Abong-Abong" },
-    { code: "2", name: "Arena Blanco" },
-    { code: "3", name: "Ayala" },
-    { code: "4", name: "Baliwasan" },
-    { code: "5", name: "Baluno" },
-    { code: "6", name: "Boalan" },
-    { code: "7", name: "Bolong" },
-    { code: "8", name: "Buenavista" },
-    { code: "9", name: "Bunguiao" },
-    { code: "10", name: "Busay" },
-    { code: "11", name: "Cabaluay" },
-    { code: "12", name: "Cabatangan" },
-    { code: "13", name: "Cacao" },
-    { code: "14", name: "Calabasa" },
-    { code: "15", name: "Calarian" },
-    { code: "16", name: "Camino Nuevo" },
-    { code: "17", name: "Camino Viejo" },
-    { code: "18", name: "Canelar" },
-    { code: "19", name: "Capisan" },
-    { code: "20", name: "Cawit" },
-    { code: "21", name: "Dulian (Upper Bunguiao)" },
-    { code: "22", name: "Dumagoc" },
-    { code: "23", name: "Dumpsa" },
-    { code: "24", name: "Guiwan" },
-    { code: "25", name: "Labuan" },
-    { code: "26", name: "La Paz" },
-    { code: "27", name: "Lapakan" },
-    { code: "28", name: "Limpapa" },
-    { code: "29", name: "Lunzuran" },
-    { code: "30", name: "Mampang" },
-    { code: "31", name: "Manicahan" },
-    { code: "32", name: "Maasin" },
-    { code: "33", name: "Mercedes" },
-    { code: "34", name: "Pasonanca" },
-    { code: "35", name: "Patalon" },
-    { code: "36", name: "Putik" },
-    { code: "37", name: "Pueblo" },
-    { code: "38", name: "Recodo" },
-    { code: "39", name: "Rio Hondo" },
-    { code: "40", name: "San Jose Cawa-Cawa" },
-    { code: "41", name: "San Jose Gusu" },
-    { code: "42", name: "San Roque" },
-    { code: "43", name: "Santa Barbara" },
-    { code: "44", name: "Santa Catalina" },
-    { code: "45", name: "Santa Maria" },
-    { code: "46", name: "Santo Niño" },
-    { code: "47", name: "Sinunuc" },
-    { code: "48", name: "Talabaan" },
-    { code: "49", name: "Talisayan" },
-    { code: "50", name: "Tetuan" },
-    { code: "51", name: "Tictapul" },
-    { code: "52", name: "Tigbalabag" },
-    { code: "53", name: "Tolosa" },
-    { code: "54", name: "Tugbungan" },
-    { code: "55", name: "Tumaga" },
-    { code: "56", name: "Victoria" },
-    { code: "57", name: "Vitali" },
-    { code: "58", name: "Zambowood" },
-  ];
+  const [barangays, setBarangays] = useState<AddressItem[]>([]);
+  const [filteredBarangays, setFilteredBarangays] = useState<AddressItem[]>([]);
   
-  const [barangays] = useState<AddressItem[]>(BARANGAYS.sort((a, b) => a.name.localeCompare(b.name)));
-  const [filteredBarangays, setFilteredBarangays] = useState<AddressItem[]>(barangays);
+  const [loadingBarangays, setLoadingBarangays] = useState(false);
   
   const [showBarangayModal, setShowBarangayModal] = useState(false);
   const [barangaySearch, setBarangaySearch] = useState('');
 
-  // Initialize and ensure province and city are always set
+  // Ensure province and city are always set to hardcoded values on mount
   useEffect(() => {
-    // Always ensure province and city are set to hardcoded values
     const needsUpdate = value.province !== HARDCODED_PROVINCE || value.city !== HARDCODED_CITY;
     
     if (needsUpdate) {
@@ -127,7 +74,10 @@ export default function AddressDropdowns({
         street: value.street || '',
       });
     }
-  }, []); // Run once on mount
+    
+    // Fetch barangays for Zamboanga City
+    fetchBarangays();
+  }, []);
 
   // Filter barangays based on search
   useEffect(() => {
@@ -136,6 +86,28 @@ export default function AddressDropdowns({
     );
     setFilteredBarangays(filtered);
   }, [barangaySearch, barangays]);
+
+  const fetchBarangays = async () => {
+    setLoadingBarangays(true);
+    try {
+      // Fetch barangays for Zamboanga City
+      const response = await fetch(`${PSGC_API_BASE}/cities-municipalities/${ZAMBOANGA_CITY_CODE}/barangays.json`);
+      const data = await response.json();
+      
+      if (data && Array.isArray(data)) {
+        const barangayList = data.map((barangay: any) => ({
+          code: barangay.code,
+          name: barangay.name,
+        }));
+        setBarangays(barangayList);
+        setFilteredBarangays(barangayList);
+      }
+    } catch (error) {
+      console.error('Error fetching barangays:', error);
+    } finally {
+      setLoadingBarangays(false);
+    }
+  };
 
   const handleBarangaySelect = (selectedBarangay: AddressItem) => {
     onChange({
@@ -153,27 +125,18 @@ export default function AddressDropdowns({
     });
   };
 
-  const renderDropdownModal = (
-    visible: boolean,
-    onClose: () => void,
-    title: string,
-    searchValue: string,
-    onSearchChange: (text: string) => void,
-    data: AddressItem[],
-    onSelect: (item: AddressItem) => void,
-    placeholder: string
-  ) => (
+  const renderBarangayModal = () => (
     <Modal
-      visible={visible}
+      visible={showBarangayModal}
       animationType="slide"
       transparent={true}
-      onRequestClose={onClose}
+      onRequestClose={() => setShowBarangayModal(false)}
     >
       <View style={styles.modalOverlay}>
         <View style={styles.modalContent}>
           <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>{title}</Text>
-            <TouchableOpacity onPress={onClose}>
+            <Text style={styles.modalTitle}>Select Barangay</Text>
+            <TouchableOpacity onPress={() => setShowBarangayModal(false)}>
               <MaterialIcons name="close" size={24} color="#333" />
             </TouchableOpacity>
           </View>
@@ -182,28 +145,35 @@ export default function AddressDropdowns({
             <MaterialIcons name="search" size={20} color="#666" />
             <TextInput
               style={styles.searchInput}
-              placeholder={placeholder}
-              value={searchValue}
-              onChangeText={onSearchChange}
+              placeholder="Search barangays..."
+              value={barangaySearch}
+              onChangeText={setBarangaySearch}
               placeholderTextColor="#999"
             />
           </View>
           
-          <FlatList
-            data={data}
-            keyExtractor={(item) => item.code}
-            renderItem={({ item }) => (
-              <TouchableOpacity
-                style={styles.dropdownItem}
-                onPress={() => onSelect(item)}
-              >
-                <Text style={styles.dropdownItemText}>{item.name}</Text>
-              </TouchableOpacity>
-            )}
-            ListEmptyComponent={
-              <Text style={styles.emptyText}>No results found</Text>
-            }
-          />
+          {loadingBarangays ? (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator size="large" color="#ff6d0b" />
+              <Text style={styles.loadingText}>Loading barangays...</Text>
+            </View>
+          ) : (
+            <FlatList
+              data={filteredBarangays}
+              keyExtractor={(item) => item.code}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={styles.dropdownItem}
+                  onPress={() => handleBarangaySelect(item)}
+                >
+                  <Text style={styles.dropdownItemText}>{item.name}</Text>
+                </TouchableOpacity>
+              )}
+              ListEmptyComponent={
+                <Text style={styles.emptyText}>No barangays found</Text>
+              }
+            />
+          )}
         </View>
       </View>
     </Modal>
@@ -211,7 +181,7 @@ export default function AddressDropdowns({
 
   return (
     <>
-      {/* Province - Hardcoded to Zamboanga Del Sur */}
+      {/* Province - Hardcoded to Zamboanga del Sur */}
       <View style={styles.inputGroup}>
         <Text style={styles.label}>Province *</Text>
         <View style={[styles.dropdownTrigger, styles.disabledTrigger]}>
@@ -220,8 +190,7 @@ export default function AddressDropdowns({
           </Text>
           <MaterialIcons name="check-circle" size={20} color="#4CAF50" />
         </View>
-        {/* Only show error if province is actually empty (which it never is) */}
-        {!value.province && errors?.province && <Text style={styles.errorText}>{errors.province}</Text>}
+        {errors?.province && !value.province && <Text style={styles.errorText}>{errors.province}</Text>}
       </View>
 
       {/* City/Municipality - Hardcoded to City of Zamboanga */}
@@ -233,49 +202,40 @@ export default function AddressDropdowns({
           </Text>
           <MaterialIcons name="check-circle" size={20} color="#4CAF50" />
         </View>
-        {/* Only show error if city is actually empty (which it never is) */}
-        {!value.city && errors?.city && <Text style={styles.errorText}>{errors.city}</Text>}
+        {errors?.city && !value.city && <Text style={styles.errorText}>{errors.city}</Text>}
       </View>
 
-      {/* Barangay */}
+      {/* Barangay - Fetched from PSGC API */}
       <View style={styles.inputGroup}>
         <Text style={styles.label}>Barangay *</Text>
         <TouchableOpacity
-          style={[styles.dropdownTrigger, errors?.barangay && styles.inputError]}
+          style={[styles.dropdownTrigger, errors?.barangay && !value.barangay && styles.inputError]}
           onPress={() => setShowBarangayModal(true)}
-          disabled={disabled}
+          disabled={disabled || loadingBarangays}
         >
           <Text style={value.barangay ? styles.dropdownText : styles.dropdownPlaceholder}>
-            {value.barangay || 'Select barangay'}
+            {value.barangay || (loadingBarangays ? 'Loading barangays...' : 'Select barangay')}
           </Text>
           <MaterialIcons name="arrow-drop-down" size={24} color="#666" />
         </TouchableOpacity>
-        {errors?.barangay && <Text style={styles.errorText}>{errors.barangay}</Text>}
+        {errors?.barangay && !value.barangay && <Text style={styles.errorText}>{errors.barangay}</Text>}
       </View>
 
       {/* Street Address */}
       <View style={styles.inputGroup}>
-        <Text style={styles.label}>Street Address</Text>
+        <Text style={styles.label}>Street Address *</Text>
         <TextInput
-          style={styles.input}
+          style={[styles.input, errors?.street && !value.street && styles.inputError]}
           placeholder="Enter street, house number, etc."
           value={value.street || ''}
           onChangeText={handleStreetChange}
           editable={!disabled}
         />
+        {errors?.street && !value.street && <Text style={styles.errorText}>{errors.street}</Text>}
       </View>
 
       {/* Barangay Modal */}
-      {renderDropdownModal(
-        showBarangayModal,
-        () => setShowBarangayModal(false),
-        'Select Barangay',
-        barangaySearch,
-        setBarangaySearch,
-        filteredBarangays,
-        handleBarangaySelect,
-        'Search barangays...'
-      )}
+      {renderBarangayModal()}
     </>
   );
 }
@@ -383,5 +343,14 @@ const styles = StyleSheet.create({
     padding: 20,
     color: '#666',
     fontSize: 16,
+  },
+  loadingContainer: {
+    padding: 40,
+    alignItems: 'center',
+  },
+  loadingText: {
+    marginTop: 10,
+    fontSize: 14,
+    color: '#666',
   },
 });

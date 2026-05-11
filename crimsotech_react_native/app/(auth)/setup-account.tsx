@@ -20,6 +20,7 @@ import { MaterialIcons } from "@expo/vector-icons";
 import AxiosInstance from "../../contexts/axios";
 import * as SecureStore from "expo-secure-store";
 import AddressDropdowns from "../components/address/AddressDropdowns";
+import MapPickerModal from "../customer/components/MapPickerModal";
 
 type Gender = "male" | "female" | "prefer_not_to_say";
 
@@ -49,19 +50,25 @@ export default function SetupAccountScreen() {
   );
   const [showYearDropdown, setShowYearDropdown] = useState(false);
 
-  // Address fields — initialized with defaults so validation passes
-  // IMPORTANT: these string values must match exactly what AddressDropdowns
-  // emits via onChange for its default province/city selection.
-  // If AddressDropdowns passes codes (e.g. "0973") use those instead.
+  // Map Picker state
+  const [showMapPicker, setShowMapPicker] = useState(false);
+  const [pinnedLocation, setPinnedLocation] = useState<{
+    latitude: number;
+    longitude: number;
+    address: string;
+    barangay: string;
+    street: string;
+    city: string;
+    province: string;
+  } | null>(null);
+
+  // Address fields — initialized with defaults
   const [address, setAddress] = useState({
     province: "Zamboanga del Sur",
     city: "City of Zamboanga",
     barangay: "",
     street: "",
   });
-
-  // Track whether AddressDropdowns has synced its defaults to parent yet
-  const [addressReady, setAddressReady] = useState(false);
 
   // Dropdown modals
   const [showGenderModal, setShowGenderModal] = useState(false);
@@ -202,6 +209,54 @@ export default function SetupAccountScreen() {
     }
   };
 
+  const handleMapLocationSelect = (location: {
+    latitude: number;
+    longitude: number;
+    address: string;
+    barangay?: string;
+    street?: string;
+    city?: string;
+    province?: string;
+  }) => {
+    console.log("📍 Map location selected:", location);
+    
+    // Ensure all properties have default values to match the state type
+    const fullLocation = {
+      latitude: location.latitude,
+      longitude: location.longitude,
+      address: location.address,
+      barangay: location.barangay || "",
+      street: location.street || "",
+      city: location.city || "",
+      province: location.province || "",
+    };
+    
+    console.log("📦 Full location with defaults:", fullLocation);
+    
+    setPinnedLocation(fullLocation);
+    
+    // Automatically populate the address fields from the pinned location
+    const updatedAddress = {
+      province: fullLocation.province || address.province,
+      city: fullLocation.city || address.city,
+      barangay: fullLocation.barangay || "",
+      street: fullLocation.street || "",
+    };
+    
+    console.log("🏠 Setting address to:", updatedAddress);
+    
+    setAddress(updatedAddress);
+    
+    // Clear any address-related errors
+    if (errors.barangay || errors.street) {
+      setErrors(prev => ({
+        ...prev,
+        barangay: '',
+        street: ''
+      }));
+    }
+  };
+
   const validateForm = () => {
     const newErrors: Record<string, string> = {};
 
@@ -225,10 +280,11 @@ export default function SetupAccountScreen() {
       newErrors.age = "You must be at least 15 years old!";
     }
 
-    // Trim before checking so whitespace-only strings are caught
+    // Validate address fields
     if (!address.province?.trim()) newErrors.province = "Province is required";
     if (!address.city?.trim()) newErrors.city = "City is required";
     if (!address.barangay?.trim()) newErrors.barangay = "Barangay is required";
+    if (!address.street?.trim()) newErrors.street = "Street address is required";
 
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
@@ -236,7 +292,7 @@ export default function SetupAccountScreen() {
 
   const handleSubmit = async () => {
     console.log("🎯 Submit button clicked");
-    console.log("📍 Current address state:", address); // helpful for debugging
+    console.log("📍 Current address state:", address);
 
     if (!validateForm()) {
       console.log("❌ Form validation failed", errors);
@@ -376,8 +432,18 @@ export default function SetupAccountScreen() {
   );
 
   const monthNames = [
-    "January", "February", "March", "April", "May", "June",
-    "July", "August", "September", "October", "November", "December",
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
   ];
 
   const daysInMonth = getDaysInMonth(selectedYear, selectedMonth);
@@ -422,7 +488,9 @@ export default function SetupAccountScreen() {
                 <View style={styles.labelContainer}>
                   <Text style={styles.label}>First Name</Text>
                   {errors.first_name && (
-                    <Text style={styles.fieldErrorText}>{errors.first_name}</Text>
+                    <Text style={styles.fieldErrorText}>
+                      {errors.first_name}
+                    </Text>
                   )}
                 </View>
                 <TextInput
@@ -437,7 +505,9 @@ export default function SetupAccountScreen() {
                 <View style={styles.labelContainer}>
                   <Text style={styles.label}>Last Name</Text>
                   {errors.last_name && (
-                    <Text style={styles.fieldErrorText}>{errors.last_name}</Text>
+                    <Text style={styles.fieldErrorText}>
+                      {errors.last_name}
+                    </Text>
                   )}
                 </View>
                 <TextInput
@@ -453,6 +523,9 @@ export default function SetupAccountScreen() {
             <View style={styles.inputGroup}>
               <View style={styles.labelContainer}>
                 <Text style={styles.label}>Middle Name</Text>
+                {errors.middle_name && (
+                  <Text style={styles.fieldErrorText}>{errors.middle_name}</Text>
+                )}
               </View>
               <TextInput
                 style={styles.input}
@@ -481,26 +554,63 @@ export default function SetupAccountScreen() {
               />
             </View>
 
+            <View style={styles.inputGroup}>
+              <View style={styles.labelContainer}>
+                <Text style={styles.label}>Sex</Text>
+                {errors.sex && (
+                  <Text style={styles.fieldErrorText}>{errors.sex}</Text>
+                )}
+              </View>
+              <TouchableOpacity
+                style={[
+                  styles.dropdownTrigger,
+                  errors.sex && styles.inputError,
+                ]}
+                onPress={() => setShowGenderModal(true)}
+                disabled={loading}
+              >
+                <Text
+                  style={
+                    gender ? styles.dropdownText : styles.dropdownPlaceholder
+                  }
+                >
+                  {getGenderDisplay()}
+                </Text>
+                <MaterialIcons name="arrow-drop-down" size={24} color="#666" />
+              </TouchableOpacity>
+            </View>
+
             <View style={styles.row}>
-              <View style={[styles.inputGroup, { flex: 2 }]}>
+              {/* Date of Birth */}
+              <View style={styles.dateOfBirthContainer}>
                 <View style={styles.labelContainer}>
-                  <Text style={styles.label}>Sex</Text>
-                  {errors.sex && (
-                    <Text style={styles.fieldErrorText}>{errors.sex}</Text>
+                  <Text style={styles.label}>Date of Birth</Text>
+                  {errors.date_of_birth && (
+                    <Text style={styles.fieldErrorText}>
+                      {errors.date_of_birth}
+                    </Text>
                   )}
                 </View>
                 <TouchableOpacity
-                  style={[styles.dropdownTrigger, errors.sex && styles.inputError]}
-                  onPress={() => setShowGenderModal(true)}
+                  style={[
+                    styles.dateInput,
+                    errors.date_of_birth && styles.inputError,
+                  ]}
+                  onPress={openCalendar}
                   disabled={loading}
                 >
-                  <Text style={gender ? styles.dropdownText : styles.dropdownPlaceholder}>
-                    {getGenderDisplay()}
+                  <Text
+                    style={
+                      dateOfBirth ? styles.dateText : styles.datePlaceholder
+                    }
+                  >
+                    {dateOfBirth ? formatDate(dateOfBirth) : "Select date"}
                   </Text>
-                  <MaterialIcons name="arrow-drop-down" size={24} color="#666" />
+                  <MaterialIcons name="calendar-today" size={20} color="#666" />
                 </TouchableOpacity>
               </View>
-              <View style={[styles.inputGroup, { flex: 1 }]}>
+
+              <View style={styles.inputGroup}>
                 <View style={styles.labelContainer}>
                   <Text style={styles.label}>Age</Text>
                   {errors.age && (
@@ -508,43 +618,42 @@ export default function SetupAccountScreen() {
                   )}
                 </View>
                 <TextInput
-                  style={[styles.input, { backgroundColor: "#f5f5f5" }]}
+                  style={[styles.input, { backgroundColor: "#f5f5f5" }, errors.age && styles.inputError]}
                   value={age}
                   editable={false}
                   placeholder="Auto-calculated"
                 />
               </View>
             </View>
-
-            {/* Date of Birth */}
-            <View style={styles.dateOfBirthContainer}>
-              <View style={styles.labelContainer}>
-                <Text style={styles.label}>Date of Birth</Text>
-                {errors.date_of_birth && (
-                  <Text style={styles.fieldErrorText}>{errors.date_of_birth}</Text>
-                )}
-              </View>
-              <TouchableOpacity
-                style={[styles.dateInput, errors.date_of_birth && styles.inputError]}
-                onPress={openCalendar}
-                disabled={loading}
-              >
-                <Text style={dateOfBirth ? styles.dateText : styles.datePlaceholder}>
-                  {dateOfBirth ? formatDate(dateOfBirth) : "Select date"}
-                </Text>
-                <MaterialIcons name="calendar-today" size={20} color="#666" />
-              </TouchableOpacity>
-            </View>
           </View>
 
           {/* Address Information */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Address</Text>
+            <View style={styles.addressHeader}>
+              <Text style={styles.sectionTitle}>Address</Text>
+              <TouchableOpacity 
+                style={styles.pinLocationButton}
+                onPress={() => setShowMapPicker(true)}
+                disabled={loading}
+              >
+                <MaterialIcons name="location-on" size={20} color="#ff6d0b" />
+                <Text style={styles.pinLocationText}>Pin Location</Text>
+              </TouchableOpacity>
+            </View>
+
+            {pinnedLocation && (
+              <View style={styles.pinnedInfoContainer}>
+                <MaterialIcons name="check-circle" size={16} color="#10b981" />
+                <Text style={styles.pinnedInfoText}>
+                  Location pinned: {pinnedLocation.address.substring(0, 100)}...
+                </Text>
+              </View>
+            )}
+
             <AddressDropdowns
               value={address}
               onChange={(data) => {
-                // Log to verify what values AddressDropdowns actually emits
-                console.log("📍 AddressDropdowns onChange:", data);
+                // Allow manual changes at all times (not disabled after pinning)
                 setAddress((prev) => ({
                   ...prev,
                   ...data,
@@ -555,6 +664,7 @@ export default function SetupAccountScreen() {
                 province: errors.province,
                 city: errors.city,
                 barangay: errors.barangay,
+                street: errors.street,
               }}
               disabled={loading}
             />
@@ -605,19 +715,37 @@ export default function SetupAccountScreen() {
             </View>
             <TouchableOpacity
               style={styles.dropdownItem}
-              onPress={() => { setGender("male"); setShowGenderModal(false); }}
+              onPress={() => {
+                setGender("male");
+                setShowGenderModal(false);
+                if (errors.sex) {
+                  setErrors(prev => ({ ...prev, sex: '' }));
+                }
+              }}
             >
               <Text style={styles.dropdownItemText}>Male</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.dropdownItem}
-              onPress={() => { setGender("female"); setShowGenderModal(false); }}
+              onPress={() => {
+                setGender("female");
+                setShowGenderModal(false);
+                if (errors.sex) {
+                  setErrors(prev => ({ ...prev, sex: '' }));
+                }
+              }}
             >
               <Text style={styles.dropdownItemText}>Female</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.dropdownItem}
-              onPress={() => { setGender("prefer_not_to_say"); setShowGenderModal(false); }}
+              onPress={() => {
+                setGender("prefer_not_to_say");
+                setShowGenderModal(false);
+                if (errors.sex) {
+                  setErrors(prev => ({ ...prev, sex: '' }));
+                }
+              }}
             >
               <Text style={styles.dropdownItemText}>Prefer not to say</Text>
             </TouchableOpacity>
@@ -650,7 +778,9 @@ export default function SetupAccountScreen() {
                 <MaterialIcons name="chevron-left" size={24} color="#333" />
               </TouchableOpacity>
               <View style={styles.monthYearDisplay}>
-                <Text style={styles.monthText}>{monthNames[selectedMonth]}</Text>
+                <Text style={styles.monthText}>
+                  {monthNames[selectedMonth]}
+                </Text>
                 <View style={styles.yearSelectorContainer}>
                   <TouchableOpacity
                     style={styles.yearButton}
@@ -658,7 +788,9 @@ export default function SetupAccountScreen() {
                   >
                     <Text style={styles.yearText}>{selectedYear}</Text>
                     <MaterialIcons
-                      name={showYearDropdown ? "arrow-drop-up" : "arrow-drop-down"}
+                      name={
+                        showYearDropdown ? "arrow-drop-up" : "arrow-drop-down"
+                      }
                       size={24}
                       color="#333"
                     />
@@ -676,7 +808,9 @@ export default function SetupAccountScreen() {
             {/* Day Headers */}
             <View style={styles.dayHeaders}>
               {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => (
-                <Text key={day} style={styles.dayHeaderText}>{day}</Text>
+                <Text key={day} style={styles.dayHeaderText}>
+                  {day}
+                </Text>
               ))}
             </View>
 
@@ -791,6 +925,15 @@ export default function SetupAccountScreen() {
           </Pressable>
         </Pressable>
       </Modal>
+
+      {/* Map Picker Modal */}
+      <MapPickerModal
+        visible={showMapPicker}
+        onClose={() => setShowMapPicker(false)}
+        onSelect={handleMapLocationSelect}
+        initialLatitude={pinnedLocation?.latitude}
+        initialLongitude={pinnedLocation?.longitude}
+      />
     </KeyboardAvoidingView>
   );
 }
@@ -853,6 +996,43 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
     letterSpacing: 1,
   },
+  addressHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  pinLocationButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#fff7f2",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#ffedd5",
+    gap: 6,
+  },
+  pinLocationText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#ff6d0b",
+  },
+  pinnedInfoContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#ecfdf5",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    marginBottom: 12,
+    gap: 8,
+  },
+  pinnedInfoText: {
+    fontSize: 12,
+    color: "#065f46",
+    flex: 1,
+  },
   row: {
     flexDirection: "row",
     alignItems: "flex-start",
@@ -866,6 +1046,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     marginBottom: 6,
+    flexWrap: "wrap",
   },
   label: {
     fontSize: 12,
@@ -910,7 +1091,9 @@ const styles = StyleSheet.create({
     color: "#999",
   },
   dateOfBirthContainer: {
+    flex: 2,
     marginBottom: 16,
+    marginRight: 10,
   },
   dateInput: {
     borderWidth: 1.5,
