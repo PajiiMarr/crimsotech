@@ -219,7 +219,7 @@ export default function SetupAccountScreen() {
     province?: string;
   }) => {
     console.log("📍 Map location selected:", location);
-    
+
     // Ensure all properties have default values to match the state type
     const fullLocation = {
       latitude: location.latitude,
@@ -230,11 +230,11 @@ export default function SetupAccountScreen() {
       city: location.city || "",
       province: location.province || "",
     };
-    
+
     console.log("📦 Full location with defaults:", fullLocation);
-    
+
     setPinnedLocation(fullLocation);
-    
+
     // Automatically populate the address fields from the pinned location
     const updatedAddress = {
       province: fullLocation.province || address.province,
@@ -242,17 +242,17 @@ export default function SetupAccountScreen() {
       barangay: fullLocation.barangay || "",
       street: fullLocation.street || "",
     };
-    
+
     console.log("🏠 Setting address to:", updatedAddress);
-    
+
     setAddress(updatedAddress);
-    
+
     // Clear any address-related errors
     if (errors.barangay || errors.street) {
-      setErrors(prev => ({
+      setErrors((prev) => ({
         ...prev,
-        barangay: '',
-        street: ''
+        barangay: "",
+        street: "",
       }));
     }
   };
@@ -284,7 +284,8 @@ export default function SetupAccountScreen() {
     if (!address.province?.trim()) newErrors.province = "Province is required";
     if (!address.city?.trim()) newErrors.city = "City is required";
     if (!address.barangay?.trim()) newErrors.barangay = "Barangay is required";
-    if (!address.street?.trim()) newErrors.street = "Street address is required";
+    if (!address.street?.trim())
+      newErrors.street = "Street address is required";
 
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
@@ -293,6 +294,7 @@ export default function SetupAccountScreen() {
   const handleSubmit = async () => {
     console.log("🎯 Submit button clicked");
     console.log("📍 Current address state:", address);
+    console.log("📍 Pinned location:", pinnedLocation);
 
     if (!validateForm()) {
       console.log("❌ Form validation failed", errors);
@@ -322,9 +324,11 @@ export default function SetupAccountScreen() {
         barangay: address.barangay,
         street: address.street,
         registration_stage: registrationStage,
+        latitude: pinnedLocation?.latitude || null, // Add latitude
+        longitude: pinnedLocation?.longitude || null, // Add longitude
       };
 
-      console.log("📤 Sending to API:", payload);
+      console.log("📤 Sending to API with coordinates:", payload);
 
       const response = await AxiosInstance.put("/profiling/", payload, {
         headers: { "X-User-Id": userId },
@@ -524,7 +528,9 @@ export default function SetupAccountScreen() {
               <View style={styles.labelContainer}>
                 <Text style={styles.label}>Middle Name</Text>
                 {errors.middle_name && (
-                  <Text style={styles.fieldErrorText}>{errors.middle_name}</Text>
+                  <Text style={styles.fieldErrorText}>
+                    {errors.middle_name}
+                  </Text>
                 )}
               </View>
               <TextInput
@@ -618,7 +624,11 @@ export default function SetupAccountScreen() {
                   )}
                 </View>
                 <TextInput
-                  style={[styles.input, { backgroundColor: "#f5f5f5" }, errors.age && styles.inputError]}
+                  style={[
+                    styles.input,
+                    { backgroundColor: "#f5f5f5" },
+                    errors.age && styles.inputError,
+                  ]}
                   value={age}
                   editable={false}
                   placeholder="Auto-calculated"
@@ -631,7 +641,7 @@ export default function SetupAccountScreen() {
           <View style={styles.section}>
             <View style={styles.addressHeader}>
               <Text style={styles.sectionTitle}>Address</Text>
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={styles.pinLocationButton}
                 onPress={() => setShowMapPicker(true)}
                 disabled={loading}
@@ -719,7 +729,7 @@ export default function SetupAccountScreen() {
                 setGender("male");
                 setShowGenderModal(false);
                 if (errors.sex) {
-                  setErrors(prev => ({ ...prev, sex: '' }));
+                  setErrors((prev) => ({ ...prev, sex: "" }));
                 }
               }}
             >
@@ -731,7 +741,7 @@ export default function SetupAccountScreen() {
                 setGender("female");
                 setShowGenderModal(false);
                 if (errors.sex) {
-                  setErrors(prev => ({ ...prev, sex: '' }));
+                  setErrors((prev) => ({ ...prev, sex: "" }));
                 }
               }}
             >
@@ -743,7 +753,7 @@ export default function SetupAccountScreen() {
                 setGender("prefer_not_to_say");
                 setShowGenderModal(false);
                 if (errors.sex) {
-                  setErrors(prev => ({ ...prev, sex: '' }));
+                  setErrors((prev) => ({ ...prev, sex: "" }));
                 }
               }}
             >

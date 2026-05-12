@@ -967,6 +967,13 @@ class Profiling(APIView):
         data.pop('user_id', None)
         data.pop('registration_stage', None)
         
+        # Extract latitude and longitude if provided in request
+        latitude_from_request = data.pop('latitude', None)
+        longitude_from_request = data.pop('longitude', None)
+        
+        # Check if coordinates are provided directly from map picker
+        has_direct_coordinates = latitude_from_request is not None and longitude_from_request is not None
+        
         serializer = UserSerializer(user, data=data, partial=True)
         
         if not serializer.is_valid():
@@ -976,30 +983,36 @@ class Profiling(APIView):
         # Save the user and get the updated instance
         updated_user = serializer.save()
         
-        # Check if any address field is being updated
-        address_fields = ['street', 'barangay', 'city', 'province', 'zip_code', 'country']
-        has_address_data = any(field in request.data for field in address_fields)
-        
+        # Get coordinates - prioritize direct coordinates from map picker
         latitude = None
         longitude = None
         
-        # Get coordinates from the address if address fields are present
-        if has_address_data:
-            # Get coordinates from Google Maps API using the updated address
-            latitude, longitude = self._get_coordinates_from_address(
-                street=updated_user.street,
-                barangay=updated_user.barangay,
-                city=updated_user.city,
-                province=updated_user.province,
-                country=updated_user.country or "Philippines"
-            )
+        if has_direct_coordinates:
+            # Use coordinates directly from map picker
+            latitude = Decimal(str(latitude_from_request))
+            longitude = Decimal(str(longitude_from_request))
+            print(f"[PROFILE] 📍 Using direct coordinates from map picker: ({latitude}, {longitude})")
+        else:
+            # Check if any address field is being updated
+            address_fields = ['street', 'barangay', 'city', 'province', 'zip_code', 'country']
+            has_address_data = any(field in request.data for field in address_fields)
             
-            # Update user with coordinates if available
-            if latitude and longitude:
-                updated_user.latitude = latitude
-                updated_user.longitude = longitude
-                updated_user.save(update_fields=['latitude', 'longitude'])
-                print(f"[PROFILE] Updated user {updated_user.id} with coordinates ({latitude}, {longitude})")
+            # Get coordinates from the address if address fields are present
+            if has_address_data:
+                latitude, longitude = self._get_coordinates_from_address(
+                    street=updated_user.street,
+                    barangay=updated_user.barangay,
+                    city=updated_user.city,
+                    province=updated_user.province,
+                    country=updated_user.country or "Philippines"
+                )
+        
+        # Update user with coordinates if available
+        if latitude and longitude:
+            updated_user.latitude = latitude
+            updated_user.longitude = longitude
+            updated_user.save(update_fields=['latitude', 'longitude'])
+            print(f"[PROFILE] ✅ Updated user {updated_user.id} with coordinates ({latitude}, {longitude})")
         
         # Create or update the default shipping address from user profile
         try:
@@ -1069,7 +1082,7 @@ class Profiling(APIView):
             response_data['longitude'] = float(longitude)
         
         return Response(response_data, status=status.HTTP_200_OK)
-    
+
 class VerifyNumber(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def user(self, request):
