@@ -11,7 +11,8 @@ import {
   RefreshControl,
   FlatList,
   Alert,
-  Platform
+  Platform,
+  Modal
 } from 'react-native';
 import {
   MaterialIcons
@@ -155,16 +156,16 @@ interface ShopGroup {
   pickupDate: string | null;
 }
 
-// Status tabs configuration
-const STATUS_TABS = [
-  { id: 'all', label: 'All' },
+// Status dropdown options
+const STATUS_OPTIONS = [
+  { id: 'all', label: 'All Orders' },
   { id: 'pending', label: 'Pending' },
   { id: 'processing', label: 'Processing' },
   { id: 'to_pickup', label: 'To Pickup' },
   { id: 'shipped', label: 'Shipped' },
   { id: 'completed', label: 'Completed' },
-  { id: 'rate', label: 'Rate' },
-  { id: 'returns', label: 'Returns' },
+  { id: 'rate', label: 'To Rate' },
+  { id: 'returns', label: 'Returns/Refunds' },
 ];
 
 // Status configuration for badges
@@ -323,10 +324,11 @@ const formatNumber = (num: number): string => {
 export default function PurchasesPage() {
   const { userId, loading: authLoading } = useAuth();
   const [purchaseItems, setPurchaseItems] = useState<PurchaseItem[]>([]);
-  const [shopGroups, setShopGroups] = useState<ShopGroup[]>([]); // New: grouped by shop
+  const [shopGroups, setShopGroups] = useState<ShopGroup[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [activeTab, setActiveTab] = useState('all');
+  const [showDropdown, setShowDropdown] = useState(false);
   const [orderCounts, setOrderCounts] = useState({
     pending: 0,
     processing: 0,
@@ -544,7 +546,13 @@ export default function PurchasesPage() {
     fetchPurchases();
   };
 
-  // NEW: Filter shop groups by tab
+  // Get the current selected status label
+  const getCurrentStatusLabel = () => {
+    const option = STATUS_OPTIONS.find(opt => opt.id === activeTab);
+    return option ? option.label : 'All Orders';
+  };
+
+  // Filter shop groups by tab
   const getFilteredGroups = (): ShopGroup[] => {
     let filtered = shopGroups;
   
@@ -615,7 +623,65 @@ export default function PurchasesPage() {
     );
   };
 
-  // NEW: Render a shop group card (separate order per shop)
+  // Render dropdown menu
+  const renderDropdownMenu = () => {
+    return (
+      <Modal
+        visible={showDropdown}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowDropdown(false)}
+      >
+        <TouchableOpacity 
+          style={styles.modalOverlay} 
+          activeOpacity={1} 
+          onPress={() => setShowDropdown(false)}
+        >
+          <View style={styles.dropdownContainer}>
+            <View style={styles.dropdownHeader}>
+              <Text style={styles.dropdownHeaderTitle}>Filter Orders</Text>
+              <TouchableOpacity onPress={() => setShowDropdown(false)}>
+                <MaterialIcons name="close" size={20} color="#6B7280" />
+              </TouchableOpacity>
+            </View>
+            {STATUS_OPTIONS.map((option) => {
+              const isActive = activeTab === option.id;
+              const count = orderCounts[option.id as keyof typeof orderCounts] || 0;
+              
+              return (
+                <TouchableOpacity
+                  key={option.id}
+                  style={[styles.dropdownItem, isActive && styles.dropdownItemActive]}
+                  onPress={() => {
+                    setActiveTab(option.id);
+                    setShowDropdown(false);
+                  }}
+                >
+                  <View style={styles.dropdownItemLeft}>
+                    <Text style={[styles.dropdownItemLabel, isActive && styles.dropdownItemLabelActive]}>
+                      {option.label}
+                    </Text>
+                    {count > 0 && (
+                      <View style={[styles.dropdownItemBadge, isActive && styles.dropdownItemBadgeActive]}>
+                        <Text style={[styles.dropdownItemBadgeText, isActive && styles.dropdownItemBadgeTextActive]}>
+                          {formatNumber(count)}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                  {isActive && (
+                    <MaterialIcons name="check" size={18} color="#F97316" />
+                  )}
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </TouchableOpacity>
+      </Modal>
+    );
+  };
+
+  // Render shop group card
   const renderShopGroupCard = ({ item: group }: { item: ShopGroup }) => {
     // Determine if this group has Cash on Pickup
     const showPickupBanner = 
@@ -641,7 +707,7 @@ export default function PurchasesPage() {
       ) &&
       !!group.pickupDate;
 
-    // Get the first item for display (or show multiple if needed)
+    // Get the first item for display
     const primaryItem = group.items[0];
     const hasMultipleItems = group.items.length > 1;
 
@@ -649,7 +715,6 @@ export default function PurchasesPage() {
       <TouchableOpacity 
         style={[styles.orderCard, showPickupBanner && styles.orderCardWithBanner]}
         onPress={() => {
-          // Pass both orderId AND shopId to filter by shop
           router.push({
             pathname: '/customer/view-order',
             params: { 
@@ -683,7 +748,7 @@ export default function PurchasesPage() {
           </View>
         )}
 
-        {/* Shop Header - This is the key differentiator for multi-shop orders */}
+        {/* Shop Header */}
         <View style={styles.shopHeader}>
           <View style={styles.shopInfo}>
             <MaterialIcons name="store" size={14} color="#6B7280" />
@@ -713,7 +778,7 @@ export default function PurchasesPage() {
               {hasMultipleItems && ` +${group.items.length - 1} more`}
             </Text>
             
-            {/* Variant - if available */}
+            {/* Variant */}
             {primaryItem.variant_info && primaryItem.variant_info.title && (
               <View style={styles.infoRow}>
                 <MaterialIcons name="label-outline" size={12} color="#9CA3AF" />
@@ -740,7 +805,7 @@ export default function PurchasesPage() {
           </View>
         </View>
 
-        {/* Voucher Applied (from first item) */}
+        {/* Voucher Applied */}
         {primaryItem.item?.voucher_applied && (
           <View style={styles.voucherContainer}>
             <MaterialIcons name="local-offer" size={12} color="#10B981" />
@@ -759,7 +824,6 @@ export default function PurchasesPage() {
 
           {/* Action Buttons */}
           <View style={styles.actionButtons}>
-            {/* View Details button for returns - only for return_refund, not cancelled */}
             {group.status === 'return_refund' && (
               <TouchableOpacity 
                 style={[styles.actionButton, styles.detailsButton]}
@@ -791,40 +855,29 @@ export default function PurchasesPage() {
   return (
     <CustomerLayout disableScroll>
       <View style={styles.container}>
-        {/* Status Tabs - Box style */}
-        <ScrollView 
-          horizontal 
-          showsHorizontalScrollIndicator={false}
-          style={styles.tabsScrollView}
-          contentContainerStyle={styles.tabsContainer}
-        >
-          {STATUS_TABS.map((tab) => {
-            const isActive = activeTab === tab.id;
-            const count = orderCounts[tab.id as keyof typeof orderCounts] || 0;
+        {/* Status Dropdown Button */}
+        <View style={styles.dropdownButtonContainer}>
+          <TouchableOpacity 
+            style={styles.dropdownButton}
+            onPress={() => setShowDropdown(true)}
+            activeOpacity={0.7}
+          >
+            <View style={styles.dropdownButtonLeft}>
+              <MaterialIcons name="filter-list" size={18} color="#F97316" />
+              <Text style={styles.dropdownButtonLabel}>{getCurrentStatusLabel()}</Text>
+              {orderCounts[activeTab as keyof typeof orderCounts] > 0 && activeTab !== 'all' && (
+                <View style={styles.dropdownButtonBadge}>
+                  <Text style={styles.dropdownButtonBadgeText}>
+                    {formatNumber(orderCounts[activeTab as keyof typeof orderCounts])}
+                  </Text>
+                </View>
+              )}
+            </View>
+            <MaterialIcons name="arrow-drop-down" size={24} color="#6B7280" />
+          </TouchableOpacity>
+        </View>
 
-            return (
-              <TouchableOpacity
-                key={tab.id}
-                style={[styles.tab, isActive && styles.activeTab]}
-                onPress={() => setActiveTab(tab.id)}
-                activeOpacity={0.7}
-              >
-                <Text style={[styles.tabLabel, isActive && styles.activeTabLabel]}>
-                  {tab.label}
-                </Text>
-                {count > 0 && (
-                  <View style={[styles.tabBadge, isActive && styles.activeTabBadge]}>
-                    <Text style={[styles.tabBadgeText, isActive && styles.activeTabBadgeText]}>
-                      {formatNumber(count)}
-                    </Text>
-                  </View>
-                )}
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
-
-        {/* Purchases List - Now showing shop groups instead of individual items */}
+        {/* Purchases List */}
         {filteredGroups.length === 0 ? (
           <View style={styles.emptyContainer}>
             <MaterialIcons name="shopping-bag" size={48} color="#E5E7EB" />
@@ -864,6 +917,9 @@ export default function PurchasesPage() {
           />
         )}
       </View>
+
+      {/* Dropdown Modal */}
+      {renderDropdownMenu()}
     </CustomerLayout>
   );
 }
@@ -872,7 +928,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#F9FAFB',
-    paddingTop: 52,
   },
   loadingContainer: {
     flex: 1,
@@ -885,65 +940,123 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#6B7280',
   },
-  tabsScrollView: {
+  dropdownButtonContainer: {
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: '#F3F4F6',
-    height: 48,
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    zIndex: 30,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    paddingTop: 52,
   },
-  tabsContainer: {
-    paddingHorizontal: 12,
-    paddingVertical: 0,
+  dropdownButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    flexWrap: 'nowrap',
-    minHeight: 48,
-  },
-  tab: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
+    justifyContent: 'space-between',
     backgroundColor: '#F3F4F6',
-    marginRight: 8,
-    borderRadius: 0,
-    height: 36,
-  },
-  activeTab: {
-    backgroundColor: '#F97316',
-  },
-  tabLabel: {
-    fontSize: 13,
-    fontWeight: '500',
-    color: '#6B7280',
-  },
-  activeTabLabel: {
-    color: '#FFFFFF',
-  },
-  tabBadge: {
-    backgroundColor: '#E5E7EB',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
     borderRadius: 10,
-    paddingHorizontal: 5,
-    paddingVertical: 1,
-    marginLeft: 6,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  dropdownButtonLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  dropdownButtonLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#374151',
+  },
+  dropdownButtonBadge: {
+    backgroundColor: '#F97316',
+    borderRadius: 10,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
     minWidth: 20,
     alignItems: 'center',
   },
-  activeTabBadge: {
+  dropdownButtonBadgeText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-start',
+  },
+  dropdownContainer: {
+    backgroundColor: '#FFFFFF',
+    marginTop: 100,
+    marginHorizontal: 16,
+    borderRadius: 12,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  dropdownHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
     backgroundColor: '#FFFFFF',
   },
-  tabBadgeText: {
+  dropdownHeaderTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1F2937',
+  },
+  dropdownItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  dropdownItemActive: {
+    backgroundColor: '#FFF7ED',
+  },
+  dropdownItemLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  dropdownItemLabel: {
+    fontSize: 14,
+    color: '#6B7280',
+  },
+  dropdownItemLabelActive: {
+    color: '#F97316',
+    fontWeight: '600',
+  },
+  dropdownItemBadge: {
+    backgroundColor: '#F3F4F6',
+    borderRadius: 10,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    minWidth: 20,
+    alignItems: 'center',
+  },
+  dropdownItemBadgeActive: {
+    backgroundColor: '#F97316',
+  },
+  dropdownItemBadgeText: {
     fontSize: 10,
     fontWeight: '600',
     color: '#6B7280',
   },
-  activeTabBadgeText: {
-    color: '#F97316',
+  dropdownItemBadgeTextActive: {
+    color: '#FFFFFF',
   },
   listContent: {
     padding: 12,
