@@ -7,7 +7,7 @@
     "icon": "./assets/images/crimsotechlogo.png",
     "scheme": "crimsotechreactnative",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
+    "newArchEnabled": false,
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.crimsonity.crimsotech",
@@ -34,7 +34,6 @@
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "usesCleartextTraffic": true,
       "config": {
         "googleMaps": {
           "apiKey": "AIzaSyBJD7F6025lQEecWMRqgIyViOv9Q9SeHKc"
@@ -45,7 +44,6 @@
         "android.permission.ACCESS_FINE_LOCATION",
         "android.permission.INTERNET"
       ],
-      
       "intentFilters": [
         {
           "action": "VIEW",
@@ -79,7 +77,6 @@
             "backgroundColor": "#000000"
           }
         }
-        
       ],
       "expo-secure-store",
       "expo-web-browser",
@@ -95,14 +92,14 @@
     ],
     "experiments": {
       "typedRoutes": true,
-      "reactCompiler": true
+      "reactCompiler": false
     },
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "bf7a5f8b-a7c1-4b9d-843d-6bcb371bab91"
+        "projectId": "885fdcdf-16f8-4394-8179-0de69cbed0c1"
       }
     },
-    "owner": "nesty2"
+    "owner": "pajiimarr"
   }
 }
